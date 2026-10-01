@@ -680,6 +680,23 @@ test('frappe automatique : renvoi au premier passage dans la zone, sans bouton',
   for (const h of hits) assert(Q.inZone(h.result.ball, h.result.player, CFG));
 });
 
+test('feedback et règle à retenir générés à partir des données', () => {
+  let st = R.createRally({ seed: 2024 });
+  const shot = st.shot;
+  for (let i = 0; i < 600 && st.phase === 'incoming'; i++) st = R.step(st, 1 / 60, botInput(st, 1 / 60));
+  const fb = Q.feedback(st.last, SG.FAMILIES[shot.family].name);
+  assert(['good', 'ok', 'bad'].includes(fb.level) && /Volée|Demi-volée|Avant vitre|Après vitre/.test(fb.text), fb.text);
+  const ex = Q.explainBall(shot, st.last);
+  assert(ex.lines.length >= 3 && ex.rule.length > 40);
+  assert(/km\/h/.test(ex.lines.join(' ')), 'vitesses chiffrées');
+  // Cas de l'énoncé : après vitre médiocre alors que la demi-volée était meilleure, balle dans le coin
+  const r = { outcome: 'hit', type: 'afterGlass', quality: 0.45, bestType: 'halfVolley', bestQuality: 0.85, corner: true, parts: { height: 0.9, placement: 0.9, ease: 0.8, clearance: 0.1 }, ball: { z: 1 }, player: { x: 9, y: 1 } };
+  const t = Q.feedback(r, 'Fond puis latérale').text;
+  assert(t === 'Après vitre (0,45) — Fond puis latérale. Meilleur choix : Demi-volée (0,85), la balle mourait dans le coin.', t);
+  assert(Q.feedback(r).level === 'ok');
+  assert(Q.feedback({ outcome: 'miss', reason: 'early', reasonLabel: 'Trop tôt', bestType: 'volley', bestQuality: 0.9 }, 'Directe').level === 'bad');
+});
+
 console.log('Progression');
 
 test('série de jours consécutifs', () => {

@@ -46,12 +46,33 @@
           <button class="cam-btn" data-cam="side">Côté</button>
         </div>
       </div>
+      <div class="mfb" id="matchFb" hidden role="status" aria-live="polite">
+        <span id="matchFbText"></span>
+        <button class="mfb-btn" id="matchDetailBtn">Détail</button>
+      </div>
       <div class="gauge-wrap">
         <canvas id="gauge" aria-label="Jauge de hauteur de balle (profil latéral)"></canvas>
       </div>
     </div>
 
     <p class="notice" id="notice" hidden role="status"></p>
+    <section class="match-panel" id="matchPanel" hidden>
+      <p class="match-score" id="matchScore"></p>
+      <details class="match-settings">
+        <summary>Paramètres du match</summary>
+        <div class="setting-row">
+          <span>Vitesse du jeu</span>
+          <div class="seg" role="group" aria-label="Vitesse du jeu">
+            <button class="seg-btn speed-btn" data-speed="0.5">50 %</button>
+            <button class="seg-btn speed-btn" data-speed="0.75">75 %</button>
+            <button class="seg-btn speed-btn" data-speed="1">100 %</button>
+          </div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="autoToggle"><span>Frappe automatique (débutant)</span></label>
+        <label class="toggle"><input type="checkbox" id="pathToggle"><span>Afficher la trajectoire (aide)</span></label>
+        <label class="toggle"><input type="checkbox" id="bestToggle"><span>Afficher le meilleur point après chaque balle</span></label>
+      </details>
+    </section>
     <span class="family-tag" id="familyTag" hidden></span>
     <p class="prompt" id="prompt" aria-live="polite">Chargement…</p>
 
@@ -115,6 +136,7 @@
     <button class="tab" data-mode="placement"><span class="ico">⇲</span>Placement</button>
     <button class="tab" data-mode="decision"><span class="ico">⑂</span>Décision</button>
     <button class="tab" data-mode="realtime" title="Vue 3D uniquement"><span class="ico">⏱</span>Temps réel</button>
+    <button class="tab" data-mode="match" title="Échange continu"><span class="ico">∞</span>Match</button>
     <button class="tab" data-mode="stats"><span class="ico">▤</span>Stats</button>
   </nav>
 
@@ -124,6 +146,10 @@
   <script src="scenarios.js"></script>
   <script src="stats.js"></script>
   <script src="geometry.js"></script>
+  <script src="config.js"></script>
+  <script src="quality.js"></script>
+  <script src="shotgen.js"></script>
+  <script src="rally.js"></script>
   <script src="app.js"></script>
   <script type="module" src="view3d.js" onerror="document.dispatchEvent(new Event('glass3d-error'))"></script>
 </body>

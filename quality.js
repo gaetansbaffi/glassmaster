@@ -195,6 +195,98 @@
     return { byType, bestType, best: bestType ? byType[bestType] : null };
   }
 
+  /* ---------- Feedback et règle à retenir (textes générés à partir des données) ---------- */
+
+  const fmt = (n, d) => n.toFixed(d == null ? 2 : d).replace('.', ',');
+  const kmh = (v) => Math.round(v * 3.6);
+  const WALL_NAMES = { back: 'vitre de fond', left: 'vitre latérale gauche', right: 'vitre latérale droite' };
+
+  /** Pourquoi ce coup était moins bon : la composante la plus faible, en clair. */
+  function weakness(r, cfg) {
+    cfg = cfg || DEFAULT_CONFIG;
+    if (!r.parts) return '';
+    const p = r.parts;
+    const order = Object.keys(p).sort((a, b) => p[a] - p[b]);
+    const k = order[0];
+    if (p[k] >= 0.85) return '';
+    const zn = cfg.zones[r.type];
+    if (k === 'clearance') return r.corner ? 'la balle mourait dans le coin' : 'trop près de la vitre pour armer';
+    if (k === 'height') return r.ball && r.ball.z < zn.ideal[0] ? 'balle trop basse au contact' : 'balle trop haute au contact';
+    if (k === 'placement') {
+      const pl = placementScore(r.ball, r.player, r.type, cfg);
+      if (pl.ahead < cfg.placement.ahead[0]) return 'la balle était déjà derrière toi';
+      if (pl.lateral < cfg.placement.lateral[0]) return 'trop collé à la balle';
+      return 'trop loin de la balle';
+    }
+    return 'balle rapide, peu de temps pour te placer';
+  }
+
+  /**
+   * Feedback court (non bloquant) d'une balle jouée ou perdue.
+   * Retourne { level: 'good' | 'ok' | 'bad', text }.
+   */
+  function feedback(r, familyName, cfg) {
+    cfg = cfg || DEFAULT_CONFIG;
+    const best = `${SHOT_NAMES[r.bestType]} (${fmt(r.bestQuality)})`;
+    if (r.outcome === 'miss' && r.reason !== 'weak') {
+      return { level: 'bad', text: `${r.reasonLabel} — ${familyName}. Meilleur choix : ${best}.` };
+    }
+    const why = weakness(r, cfg);
+    const head = `${SHOT_NAMES[r.type]} (${fmt(r.quality)})`;
+    if (r.outcome === 'miss') return { level: 'bad', text: `${head} : frappe trop faible, dans le filet. Meilleur choix : ${best}${why ? ', ' + why : ''}.` };
+    const level = r.quality >= cfg.quality.good ? 'good' : r.quality >= cfg.quality.ok ? 'ok' : 'bad';
+    if (r.type === r.bestType) return { level, text: `${head} — ${familyName}, meilleur choix${why ? ' ; ' + why : ''}.` };
+    return { level, text: `${head} — ${familyName}. Meilleur choix : ${best}${why ? ', ' + why : ''}.` };
+  }
+
+  const RULE_BY_BEST = {
+    volley: 'Quand la balle va mourir près de la vitre ou dans le coin, prends-la de volée avant le rebond, devant toi.',
+    halfVolley: 'Rebond court et balle qui filerait vers la vitre : joue la demi-volée juste après le rebond, sans reculer.',
+    beforeGlass: 'Balle qui rebondit loin de la vitre : joue-la avant la vitre, quand elle redescend à hauteur de hanche.',
+    afterGlass: 'Laisse la vitre travailler : place-toi derrière la ligne de la balle, à distance de bras, et frappe quand elle redescend après la vitre.',
+  };
+
+  /**
+   * Détail d'une balle : lignes chiffrées (angles d'incidence, vitesse après rebond, dégagement)
+   * et règle à retenir. best = shot.best.
+   */
+  function explainBall(shot, r) {
+    const lines = [];
+    const floor = shot.sim.contacts[0];
+    const h = Math.max(...P.sample(shot.sim, 1 / 60, floor.t, shot.endT).map((b) => b.z));
+    lines.push(`Rebond au sol à ${fmt(floor.pos.y, 1)} m du fond : ${kmh(P.speed(floor.vIn))} → ${kmh(P.speed(floor.vOut))} km/h, la balle remonte jusqu'à ${fmt(h)} m.`);
+    for (const c of shot.sim.contacts) {
+      if (c.type === 'floor') continue;
+      const a = P.wallAngles(c);
+      lines.push(
+        `${WALL_NAMES[c.type][0].toUpperCase() + WALL_NAMES[c.type].slice(1)} à ${fmt(c.pos.z)} m : incidence ${Math.round(a.inDeg)}° → sortie ${Math.round(a.outDeg)}°, ${kmh(P.hSpeed(c.vIn))} → ${kmh(P.hSpeed(c.vOut))} km/h.`
+      );
+    }
+    const best = shot.best.best;
+    const cl = clearanceScore(best.ball);
+    lines.push(
+      `Meilleur point (${SHOT_NAMES[shot.best.bestType].toLowerCase()}) : balle à ${fmt(best.ball.z)} m, ${kmh(P.speed(best.ball))} km/h, ` +
+        `à ${fmt(cl.dist, 1)} m de la paroi la plus proche${cl.corner ? ' (coin)' : ''}, marge ${fmt(Math.max(0, best.margin))} s.`
+    );
+    if (r && r.outcome === 'hit') {
+      const c = clearanceScore(r.ball);
+      lines.push(`Ta frappe (${SHOT_NAMES[r.type].toLowerCase()}) : balle à ${fmt(r.ball.z)} m, à ${fmt(c.dist, 1)} m de la paroi, erreur de placement ${fmt(r.placementError)} m.`);
+    }
+    // Règle : le meilleur coup, illustré par les chiffres de cette balle
+    let rule = RULE_BY_BEST[shot.best.bestType];
+    const glass = shot.best.byType.afterGlass;
+    if (shot.best.bestType !== 'afterGlass' && glass) {
+      const gc = clearanceScore(glass.ball);
+      rule += ` Ici, la sortie de vitre ne valait que ${fmt(glass.quality)}${gc.corner ? ' : la balle s’enfermait dans le coin' : gc.dist < 1 ? ` : elle restait à ${fmt(gc.dist, 1)} m de la paroi` : ''}.`;
+    } else if (shot.best.bestType === 'afterGlass') {
+      const w = shot.sim.contacts.filter((c) => c.type !== 'floor');
+      const last = w[w.length - 1];
+      const a = P.wallAngles(last);
+      rule += ` Ici, la balle sort de la ${WALL_NAMES[last.type]} à ${Math.round(a.outDeg)}° et ${kmh(P.hSpeed(last.vOut))} km/h : elle revient vers le centre, attends-la.`;
+    }
+    return { lines, rule };
+  }
+
   const Quality = {
     SHOT_TYPES,
     SHOT_NAMES,
@@ -210,6 +302,9 @@
     idealPosition,
     timeMargin,
     bestChoice,
+    weakness,
+    feedback,
+    explainBall,
   };
 
   if (node) module.exports = Quality;

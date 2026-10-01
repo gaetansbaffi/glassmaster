@@ -38,6 +38,7 @@
     placement: 'Glisse ton joueur là où tu frapperais la balle.',
     decision: 'Que fais-tu ?',
     realtime: 'Place-toi et appuie sur « Frappe » (ou Espace) au moment de frapper.',
+    match: 'Déplace-toi et frappe au bon moment : volée, demi-volée, avant ou après la vitre.',
   };
   const MODE_PROMPTS_3D = {
     placement: 'Déplace-toi (joystick, flèches ou ZQSD) jusqu’à ta position de frappe.',
@@ -62,6 +63,8 @@
     /** État exact de la balle à l'instant t (t < 0 : vol côté adverse, avant le filet). */
     ballAt(t) {
       if (!app.sc) return null;
+      const r = app.matchRet; // match : renvoi vers le camp adverse après la frappe
+      if (r && t > r.t0) return G.ballistic(r.init, Math.min(t - r.t0, r.T), app.sc.sim.params.g);
       if (t < 0) return G.ballistic(app.sc.init, t, app.sc.sim.params.g);
       return P.stateAt(app.sc.sim, t);
     },
@@ -376,6 +379,7 @@
 
   function draw() {
     if (!app.view.w) return;
+    if (app.mode === 'match' && !is3D()) return drawMatch2D();
     if (is3D()) {
       // La scène 3D a sa propre boucle de rendu ; ici on ne met à jour que la jauge.
       return drawGauge(app.sc ? app.ballAt(app.t) : null);
@@ -558,6 +562,7 @@
   /* ---------- Déroulé d'un exercice ---------- */
 
   function newRound() {
+    if (app.mode === 'match') return startMatch();
     const mode = app.mode;
     const level = store.state.levels[mode];
     const cfg = Stats.pickConfig(store.state.attempts, mode, Math.random);
@@ -733,6 +738,9 @@
     const mode = app.mode;
     const phase = app.phase;
     const main = $('mainBtn');
+    $('matchPanel').hidden = mode !== 'match';
+    $('revealToggle').parentElement.hidden = mode === 'match';
+    if (mode === 'match') return updateMatchUI();
     $('decisionButtons').hidden = mode !== 'decision';
     if (phase !== 'result') $('feedback').hidden = true;
     document.querySelectorAll('.choice').forEach((b) => {
@@ -807,6 +815,11 @@
   /* ---------- Interactions terrain ---------- */
 
   function onPointer(evt) {
+    if (app.mode === 'match') {
+      // Match en 2D : le doigt indique où courir
+      if (match.running) match.target = toWorld(evt);
+      return;
+    }
     if (app.phase !== 'answer') return;
     if (app.mode === 'decision') return;
     const p = toWorld(evt);
@@ -817,7 +830,7 @@
   }
 
   court.addEventListener('pointerdown', (e) => {
-    if (app.phase !== 'answer') return;
+    if (app.phase !== 'answer' && !(app.mode === 'match' && match.running)) return;
     app.dragging = true;
     try {
       court.setPointerCapture(e.pointerId);
@@ -834,16 +847,19 @@
   court.addEventListener('pointercancel', stopDrag);
 
   $('mainBtn').addEventListener('click', () => {
+    if (app.mode === 'match') return app.phase === 'result' ? resumeMatch() : (match.press = true);
     if (app.phase === 'result') newRound();
     else if (app.mode === 'realtime') strike(false);
     else submit();
   });
   window.addEventListener('keydown', (e) => {
+    if (app.mode === 'match') return matchKey(e, true);
     if (e.code !== 'Space' || app.mode !== 'realtime' || !is3D()) return;
     e.preventDefault();
     if (app.phase === 'live') strike(false);
   });
-  $('replayBtn').addEventListener('click', replay);
+  window.addEventListener('keyup', (e) => matchKey(e, false));
+  $('replayBtn').addEventListener('click', () => (app.mode === 'match' ? openDetail() : replay()));
   document.querySelectorAll('.choice').forEach((b) =>
     b.addEventListener('click', () => {
       b.classList.add('picked');
@@ -857,6 +873,281 @@
     store.setSetting('reveal', reveal.checked);
     draw();
   });
+
+  /* ---------- Mode Match infini ---------- */
+
+  const R = window.GlassRally;
+  const SG = window.GlassShotGen;
+  const Q = window.GlassQuality;
+  const CFG = window.GlassConfig;
+  const match = { state: null, running: false, last: 0, press: false, keys: new Set(), target: null, detail: null, fbTimer: null, session: 0 };
+
+  function matchSettings() {
+    return Object.assign({ speed: 1, auto: false, showPath: false, showBest: true }, store.state.settings.match);
+  }
+
+  function setMatchSetting(key, value) {
+    store.setSetting('match', Object.assign(matchSettings(), { [key]: value }));
+    if (key === 'auto' && match.state) match.state = R.withSettings(match.state, { auto: value });
+    syncMatchSettingsUI();
+    updateUI();
+  }
+
+  function syncMatchSettingsUI() {
+    const ms = matchSettings();
+    document.querySelectorAll('.speed-btn').forEach((b) => b.classList.toggle('active', +b.dataset.speed === ms.speed));
+    $('autoToggle').checked = ms.auto;
+    $('pathToggle').checked = ms.showPath;
+    $('bestToggle').checked = ms.showBest;
+  }
+
+  /** Graine de la partie : ?seed=123 dans l'URL pour rejouer exactement la même suite de balles. */
+  function matchSeed() {
+    const m = /[?&]seed=(\d+)/.exec(location.search);
+    return m ? Number(m[1]) >>> 0 : (Math.random() * 4294967296) >>> 0;
+  }
+
+  function startMatch() {
+    match.session = Date.now();
+    const seed = matchSeed();
+    match.state = R.createRally({ seed, auto: matchSettings().auto, player: CFG.player.start });
+    match.detail = null;
+    match.target = null;
+    $('seedInfo').textContent = `Graine ${seed}`;
+    $('familyTag').hidden = true;
+    hideMatchFeedback();
+    onMatchEvents(match.state.events);
+    app.phase = 'match';
+    syncMatchApp();
+    updateUI();
+    match.running = true;
+    match.last = 0;
+    requestAnimationFrame(matchFrame);
+  }
+
+  /** Recopie l'état de l'échange dans `app`, lu par les vues 2D et 3D. */
+  function syncMatchApp() {
+    const s = match.state;
+    const ms = matchSettings();
+    app.sc = s.shot;
+    app.tStart = s.shot.tStart;
+    app.player = s.player;
+    app.matchRet = s.phase === 'return' ? { init: s.ret.init, t0: s.t, T: s.ret.T } : null;
+    app.t = s.phase === 'return' ? s.t + s.ret.t : s.t;
+    app.showPath = ms.showPath && s.phase === 'incoming';
+    app.overlayAlways = ms.showBest && (s.phase === 'return' || s.phase === 'miss');
+  }
+
+  function matchMoveInput() {
+    if (is3D() && three.ctrl) return three.ctrl.moveVector();
+    const kv = G.keyboardVector(match.keys);
+    if (kv.x || kv.y) {
+      match.target = null;
+      return kv;
+    }
+    const tg = match.target;
+    if (!tg) return null;
+    const p = match.state.player;
+    const d = Math.hypot(tg.x - p.x, tg.y - p.y);
+    if (d < 0.05) {
+      match.target = null;
+      return null;
+    }
+    return { x: (tg.x - p.x) / d, y: (tg.y - p.y) / d };
+  }
+
+  function matchFrame(now) {
+    if (!match.running || app.mode !== 'match') return;
+    const dtReal = match.last ? Math.min(0.05, (now - match.last) / 1000) : 0;
+    match.last = now;
+    const dt = dtReal * matchSettings().speed;
+    const strike = match.press && !match.state.auto;
+    match.press = false;
+    match.state = R.step(match.state, dt, { move: matchMoveInput(), strike });
+    onMatchEvents(match.state.events);
+    syncMatchApp();
+    draw();
+    updateMatchHud();
+    requestAnimationFrame(matchFrame);
+  }
+
+  function onMatchEvents(events) {
+    for (const e of events) {
+      if (e.type === 'newBall') {
+        const s = match.state;
+        app.sc = s.shot;
+        app.samples = P.sample(s.shot.sim, 1 / 120);
+        app.result = null;
+        if (three.ctrl) three.ctrl.newScenario();
+        updateMatchUI();
+      } else {
+        const result = Object.assign({}, e.result, { shot: match.state.shot });
+        app.result = result;
+        match.detail = { shot: match.state.shot, result };
+        recordMatchBall(result);
+        showMatchFeedback(result);
+      }
+    }
+  }
+
+  /** Enregistrement de la balle (étendu par les statistiques du match). */
+  function recordMatchBall() {}
+
+  function showMatchFeedback(r) {
+    const fb = Q.feedback(r, SG.FAMILIES[r.family].name, CFG);
+    const el = $('matchFb');
+    el.className = 'mfb ' + fb.level;
+    $('matchFbText').textContent = fb.text;
+    el.hidden = false;
+    clearTimeout(match.fbTimer);
+    match.fbTimer = setTimeout(hideMatchFeedback, CFG.game.feedbackMs);
+  }
+
+  function hideMatchFeedback() {
+    clearTimeout(match.fbTimer);
+    $('matchFb').hidden = true;
+  }
+
+  /** Détail : pause, replay au ralenti de la dernière balle, meilleur point et règle à retenir. */
+  function openDetail() {
+    const d = match.detail;
+    if (!d) return;
+    match.running = false;
+    hideMatchFeedback();
+    app.matchRet = null;
+    app.showPath = false;
+    app.overlayAlways = false;
+    app.sc = d.shot;
+    app.samples = P.sample(d.shot.sim, 1 / 120);
+    app.tStart = d.shot.tStart;
+    app.player = d.result.player;
+    app.result = d.result;
+    app.phase = 'playing';
+    updateUI();
+    play(d.shot.tStart, d.shot.endT, REPLAY_SPEED * 0.75, () => {
+      app.phase = 'result';
+      showMatchDetail(d);
+      updateUI();
+      draw();
+    });
+  }
+
+  function showMatchDetail(d) {
+    const r = d.result;
+    const fb = Q.feedback(r, SG.FAMILIES[r.family].name, CFG);
+    const ex = Q.explainBall(d.shot, r);
+    const resultEl = $('result');
+    resultEl.className = 'result ' + (fb.level === 'good' ? 'good' : fb.level === 'bad' ? 'bad' : 'warn');
+    resultEl.textContent = fb.text;
+    const ul = $('explain');
+    ul.innerHTML = '';
+    for (const l of ex.lines) {
+      const li = document.createElement('li');
+      li.textContent = l;
+      ul.append(li);
+    }
+    $('rule').textContent = ex.rule;
+    $('feedback').hidden = false;
+    const tag = $('familyTag');
+    tag.textContent = SG.FAMILIES[r.family].name;
+    tag.hidden = false;
+  }
+
+  function resumeMatch() {
+    app.anim = null;
+    $('feedback').hidden = true;
+    $('familyTag').hidden = true;
+    hideMatchFeedback();
+    if (three.ctrl) three.ctrl.setCameraMode('fp');
+    app.phase = 'match';
+    app.result = match.state.last && match.state.phase !== 'incoming' ? app.result : null;
+    syncMatchApp();
+    updateUI();
+    match.running = true;
+    match.last = 0;
+    requestAnimationFrame(matchFrame);
+  }
+
+  function matchKey(e, down) {
+    if (app.mode !== 'match') return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (down && match.running && !e.repeat) match.press = true;
+      return;
+    }
+    if (!/^(Arrow|Key[WASD])/.test(e.code)) return;
+    if (down) {
+      match.keys.add(e.code);
+      e.preventDefault();
+    } else match.keys.delete(e.code);
+  }
+
+  function updateMatchHud() {
+    const s = match.state;
+    if (!s) return;
+    $('matchScore').textContent = `Série ${s.streak} · Meilleure ${s.bestStreak} · Balles ${s.balls} · Niv. ${s.level}`;
+    const main = $('mainBtn');
+    if (app.phase === 'match') main.disabled = s.auto || s.phase !== 'incoming';
+  }
+
+  function updateMatchUI() {
+    const main = $('mainBtn');
+    $('decisionButtons').hidden = true;
+    const detail = app.phase === 'playing' || app.phase === 'result';
+    if (!detail) $('feedback').hidden = true;
+    $('prompt').textContent = detail ? 'Détail de la balle (ralenti) — meilleur point en vert, ta frappe en orange.' : MODE_PROMPTS.match;
+    main.hidden = false;
+    if (app.phase === 'result') {
+      main.textContent = 'Reprendre ▶';
+      main.disabled = false;
+    } else {
+      main.textContent = matchSettings().auto ? 'Frappe auto' : 'Frappe !';
+      main.disabled = detail || !match.state || match.state.auto || match.state.phase !== 'incoming';
+    }
+    const rb = $('replayBtn');
+    rb.textContent = detail ? '↺ Rejouer' : 'Détail';
+    rb.disabled = app.phase === 'playing' || !match.detail;
+    const camSel = $('camSel');
+    camSel.hidden = !(is3D() && detail);
+    if (three.ctrl) camSel.querySelectorAll('.cam-btn').forEach((b) => b.classList.toggle('active', b.dataset.cam === three.ctrl.cameraMode));
+    updateMatchHud();
+    refreshHeader();
+  }
+
+  $('matchDetailBtn').addEventListener('click', openDetail);
+  document.querySelectorAll('.speed-btn').forEach((b) => b.addEventListener('click', () => setMatchSetting('speed', +b.dataset.speed)));
+  for (const [id, key] of [['autoToggle', 'auto'], ['pathToggle', 'showPath'], ['bestToggle', 'showBest']]) {
+    $(id).addEventListener('change', () => setMatchSetting(key, $(id).checked));
+  }
+  syncMatchSettingsUI();
+
+  /** Vue 2D du match : court, balle, joueur, trajectoire (aide) et meilleur point. */
+  function drawMatch2D() {
+    drawCourt();
+    const sc = app.sc;
+    if (!sc) return drawGauge(null);
+    const replay = app.phase === 'playing' || app.phase === 'result';
+    if (app.showPath || replay) drawTrack(0, sc.endT, COL.future, [6, 5], 2);
+    drawTrack(0, Math.min(app.t, sc.endT), COL.track, [], 2);
+    drawContacts(Math.min(app.t, sc.endT));
+    const res = replay || app.overlayAlways ? app.result : null;
+    if (res) {
+      const best = res.shot && res.shot.best.best;
+      if (best) {
+        drawPlayer(best.pos, COL.truth, true, false);
+        drawRing(best.ball, COL.truth, 'meilleur');
+      }
+      if (res.ball) drawCross(res.ball, COL.answer);
+    }
+    if (match.target && match.running) drawRing(match.target, 'rgba(255,255,255,0.6)');
+    drawPlayer(app.player, COL.player, false, true);
+    const st = app.ballAt(app.t);
+    if (st && st.y <= COURT.depth + 0.3) drawBall(st);
+    drawGauge(st);
+  }
+
+  // Débogage / tests automatisés : ?debug expose l'état (aucun effet sinon)
+  if (/[?&]debug\b/.test(location.search)) window.GlassDebug = { app, match };
 
   /* ---------- Navigation ---------- */
 
@@ -875,6 +1166,13 @@
     $('statsView').hidden = !isStats;
     const prev = app.mode;
     app.mode = mode;
+    if (prev === 'match' && mode !== 'match') {
+      match.running = false;
+      hideMatchFeedback();
+      app.matchRet = null;
+      app.showPath = false;
+      app.overlayAlways = false;
+    }
     if (isStats) {
       app.anim = null;
       if (three.ctrl) three.ctrl.stop();
@@ -1136,6 +1434,7 @@
         getApp: () => app,
         getSettings: () => store.state.settings,
         canMove: () => is3D() && ((app.phase === 'answer' && app.mode === 'placement') || (app.phase === 'live' && app.mode === 'realtime')),
+        joystickOn: () => app.mode === 'match' && match.running,
         onPlayerMove: (p) => {
           app.player = p;
         },
