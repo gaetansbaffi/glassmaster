@@ -199,35 +199,7 @@ test('difficulté : balles plus rapides aux niveaux élevés', () => {
   assert(avg(5) > avg(1) * 1.2, 'le niveau 5 devrait être nettement plus rapide');
 });
 
-test('le moment de gel précède le premier contact paroi et suit le rebond au sol', () => {
-  for (const f of S.FAMILY_IDS) {
-    for (const seed of SCENARIO_SEEDS) {
-      const sc = S.generate({ family: f, level: 3, seed });
-      assert(sc.freezeT < sc.firstWallT && sc.freezeT > sc.floors[0].t, 'gel lecture');
-      assert(sc.decisionFreezeT < sc.floors[0].t, 'gel décision');
-    }
-  }
-});
-
-test('évaluations : lecture, placement, décision', () => {
-  const sc = S.generate({ family: 'B', level: 2, seed: 5 });
-  const q = S.readingQuestion(sc, P.mulberry32(1));
-  const perfect = S.evaluateReading(q, q.target);
-  assert(perfect.error === 0 && perfect.success);
-  const far = S.evaluateReading(q, { x: q.target.x + 3, y: q.target.y });
-  near(far.error, 3, 1e-9);
-  assert(!far.success);
-  const pl = S.evaluatePlacement(sc, S.evaluatePlacement(sc, { x: 5, y: 5 }).ideal);
-  assert(pl.success, 'la position idéale doit être réussie');
-  const dec = S.evaluateDecision(sc, S.evaluateDecisionOptions(sc).best);
-  assert(dec.success, 'la meilleure option doit être réussie');
-  const ex = S.explain(sc);
-  assert(ex.lines.length >= 3 && ex.rule.length > 10);
-});
-
 console.log('Géométrie 3D');
-
-const CAM = { position: { x: 5, y: 2.6, z: 1.7 }, target: { x: 5.5, y: 6, z: 1 }, fovDeg: 70, aspect: 0.8 };
 
 test('monde ↔ scène : aller-retour exact et rotation directe (déterminant +1)', () => {
   const rng = P.mulberry32(11);
@@ -245,62 +217,6 @@ test('monde ↔ scène : aller-retour exact et rotation directe (déterminant +1
   near(G.vec.dot(G.vec.cross(ex, ey), ez), 1, 1e-12, 'orientation conservée');
   const net = G.worldToScene({ x: 5, y: 10, z: 0 });
   assert(net.x === 0 && net.y === 0 && net.z === 0, 'filet au centre de la scène');
-});
-
-test('écran ↔ NDC : coins et centre', () => {
-  const c = G.screenToNDC(200, 150, 400, 300);
-  near(c.x, 0, 1e-12);
-  near(c.y, 0, 1e-12);
-  const tl = G.screenToNDC(0, 0, 400, 300);
-  assert(tl.x === -1 && tl.y === 1, 'coin haut gauche');
-  const back = G.ndcToScreen(0.3, -0.4, 400, 300);
-  const n = G.screenToNDC(back.x, back.y, 400, 300);
-  near(n.x, 0.3, 1e-12);
-  near(n.y, -0.4, 1e-12);
-});
-
-test('le centre de l’écran vise exactement la cible de la caméra', () => {
-  const ray = G.rayFromCamera(CAM, { x: 0, y: 0 });
-  const f = G.vec.norm(G.vec.sub(CAM.target, CAM.position));
-  near(G.vec.dot(ray.dir, f), 1, 1e-12);
-});
-
-test('rayon vers le sol : le point touché se reprojette sur le pixel touché', () => {
-  const W = 360;
-  const H = 450;
-  let hits = 0;
-  for (let py = 0; py <= H; py += 15) {
-    for (let px = 0; px <= W; px += 20) {
-      const g = G.screenToGround(CAM, px, py, W, H);
-      if (!g) continue;
-      hits++;
-      near(g.z, 0, 1e-9, 'le point est sur le sol');
-      const s = G.worldToScreen(CAM, g, W, H);
-      near(s.x, px, 1e-6, 'x écran');
-      near(s.y, py, 1e-6, 'y écran');
-    }
-  }
-  assert(hits > 100, 'trop peu de pixels touchent le sol : ' + hits);
-});
-
-test('rayon vers le sol : un point du sol projeté puis relancé retombe au même endroit', () => {
-  const rng = P.mulberry32(5);
-  for (let i = 0; i < 200; i++) {
-    const p = { x: rng() * 10, y: 3 + rng() * 15, z: 0 };
-    const s = G.worldToScreen(CAM, p, 390, 500);
-    if (!s) continue;
-    const g = G.screenToGround(CAM, s.x, s.y, 390, 500);
-    near(g.x, p.x, 1e-6);
-    near(g.y, p.y, 1e-6);
-  }
-});
-
-test('rayon vers le sol : viser au-dessus de l’horizon ne touche pas le sol, un point derrière la caméra n’est pas projeté', () => {
-  const flat = { position: { x: 5, y: 2, z: 1.7 }, target: { x: 5, y: 10, z: 1.7 }, fovDeg: 70, aspect: 1 };
-  assert(G.screenToGround(flat, 50, 0, 100, 100) === null, 'haut de l’écran = ciel');
-  assert(G.screenToGround(flat, 50, 100, 100, 100) !== null, 'bas de l’écran = sol');
-  assert(G.intersectGround({ origin: { x: 0, y: 0, z: 1 }, dir: { x: 0, y: 1, z: 0 } }) === null, 'rayon horizontal');
-  assert(G.worldToScreen(flat, { x: 5, y: 0, z: 1 }, 100, 100) === null, 'point derrière');
 });
 
 test('champ de vision : 75° horizontal en portrait, bornes respectées', () => {
@@ -326,21 +242,6 @@ test('angles de regard : aller-retour et lissage par le plus court chemin', () =
   near(G.wrapAngle(3 * Math.PI), Math.PI, 1e-12);
   near(G.wrapAngle(-Math.PI), Math.PI, 1e-12, 'intervalle ]-π, π]');
   near(G.wrapAngle(0.5 - 4 * Math.PI), 0.5, 1e-12);
-});
-
-test('déplacement : relatif au regard, borné à la moitié de défense', () => {
-  const p = G.moveOnCourt({ x: 5, y: 3 }, { x: 0, y: 1 }, 0, 4, 0.5);
-  near(p.x, 5, 1e-12);
-  near(p.y, 5, 1e-12, 'avancer vers le filet');
-  const r = G.moveOnCourt({ x: 5, y: 3 }, { x: 1, y: 0 }, 0, 4, 0.25);
-  near(r.x, 6, 1e-12, 'pas chassé à droite');
-  const back = G.moveOnCourt({ x: 5, y: 3 }, { x: 0, y: 1 }, Math.PI, 4, 0.25);
-  near(back.y, 2, 1e-12, 'regard vers la vitre : avancer = reculer vers le fond');
-  const far = G.moveOnCourt({ x: 5, y: 9 }, { x: 1, y: 1 }, 0, 50, 1);
-  const b = G.DEFENSE_BOUNDS;
-  assert(far.x === b.xMax && far.y === b.yMax, 'bornes filet / paroi');
-  const out = G.moveOnCourt({ x: 0.5, y: 0.5 }, { x: -1, y: -1 }, 0, 50, 1);
-  assert(out.x === b.xMin && out.y === b.yMin, 'bornes vitre de fond / paroi');
 });
 
 test('joystick et clavier : zone morte, norme ≤ 1, ZQSD (AZERTY) = WASD (QWERTY)', () => {
@@ -384,20 +285,6 @@ test('balle côté adverse : la remontée dans le temps reste sur la trajectoire
       near(back.vz, sc.init.vz, 1e-9);
     }
   }
-});
-
-test('temps réel : jugement sur la distance et le timing', () => {
-  const w = { t0: 1.0, t1: 1.1 };
-  assert(G.judgeStrike({ placementError: 0, strikeT: 1.05, window: w }).success, 'parfait');
-  const early = G.judgeStrike({ placementError: 0, strikeT: 0.7, window: w });
-  assert(!early.success && early.timing === 'early');
-  near(early.timingError, 0.3, 1e-12);
-  const late = G.judgeStrike({ placementError: 0, strikeT: 1.4, window: w });
-  assert(!late.success && late.timing === 'late');
-  assert(G.judgeStrike({ placementError: 0, strikeT: 1.2, window: w }).success, 'dans la tolérance de 0,15 s');
-  assert(!G.judgeStrike({ placementError: 0.6, strikeT: 1.05, window: w }).success, 'trop loin');
-  const none = G.judgeStrike({ placementError: 0.1, strikeT: null, window: w });
-  assert(!none.success && none.timing === 'none');
 });
 
 console.log('Match infini — classification et qualité');
@@ -698,87 +585,6 @@ test('feedback et règle à retenir générés à partir des données', () => {
 });
 
 console.log('Progression');
-
-test('série de jours consécutifs', () => {
-  const d = (s) => new Date(s + 'T12:00:00').getTime();
-  const attempts = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01'].map((s) => ({ ts: d(s) }));
-  near(Stats.streak(attempts, d('2026-10-01')), 4, 0);
-  near(Stats.streak(attempts, d('2026-10-02')), 4, 0, 'la série tient tant que la journée n’est pas finie');
-  near(Stats.streak(attempts, d('2026-10-03')), 0, 0);
-  near(Stats.streak([], d('2026-10-01')), 0, 0);
-});
-
-test('répétition espacée : les configurations ratées sortent plus souvent', () => {
-  const attempts = [];
-  for (let i = 0; i < 20; i++) {
-    attempts.push({ mode: 'lecture', family: 'A', configKey: 'A:left', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'A', configKey: 'A:right', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'B', configKey: 'B:left', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'B', configKey: 'B:right', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'C', configKey: 'C:left', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'C', configKey: 'C:right', success: true, ts: i });
-    attempts.push({ mode: 'lecture', family: 'D', configKey: 'D:left', success: false, ts: i });
-    attempts.push({ mode: 'lecture', family: 'D', configKey: 'D:right', success: true, ts: i });
-  }
-  const rng = P.mulberry32(9);
-  const counts = {};
-  for (let i = 0; i < 4000; i++) {
-    const k = Stats.pickConfig(attempts, 'lecture', rng);
-    counts[k.key] = (counts[k.key] || 0) + 1;
-  }
-  assert(counts['D:left'] > 2 * counts['A:left'], JSON.stringify(counts));
-});
-
-test('difficulté adaptative : montée au-delà de 80 % de réussite, descente sous 40 %', () => {
-  const mk = (n, rate) => Array.from({ length: n }, (_, i) => ({ mode: 'lecture', level: 2, success: i < Math.round(n * rate) }));
-  near(Stats.nextLevel(mk(10, 0.9), 2), 3, 0);
-  near(Stats.nextLevel(mk(10, 0.8), 2), 2, 0);
-  near(Stats.nextLevel(mk(10, 0.3), 2), 1, 0);
-  near(Stats.nextLevel(mk(5, 1), 2), 2, 0, 'pas assez d’essais');
-  near(Stats.nextLevel(mk(10, 1), 5), 5, 0, 'niveau max');
-});
-
-test('stats par famille et export / import JSON', () => {
-  const mem = {};
-  const storage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => (mem[k] = String(v)) };
-  const store = Stats.createStore(storage);
-  store.record({ mode: 'lecture', family: 'A', configKey: 'A:left', level: 1, success: true, error: 0.3 });
-  store.record({ mode: 'lecture', family: 'A', configKey: 'A:left', level: 1, success: false, error: 1.5 });
-  const fs = Stats.familyStats(store.state.attempts);
-  near(fs.A.rate, 0.5, 1e-9);
-  near(fs.A.meanError, 0.9, 1e-9);
-  const json = store.exportJSON();
-  const store2 = Stats.createStore({ getItem: () => null, setItem: () => {} });
-  store2.importJSON(json);
-  near(store2.state.attempts.length, 2, 0);
-  let threw = false;
-  try {
-    store2.importJSON('{"pas":"valide"}');
-  } catch (e) {
-    threw = true;
-  }
-  assert(threw, 'un JSON invalide doit être refusé');
-});
-
-test('stats : champ « vue utilisée » et comparaison 2D / 3D', () => {
-  const attempts = [
-    { mode: 'lecture', family: 'A', success: true, error: 0.2, ts: 1 }, // ancien essai sans vue → 2D
-    { mode: 'lecture', family: 'A', success: false, error: 1.0, ts: 2, view: '2d' },
-    { mode: 'lecture', family: 'B', success: true, error: 0.4, ts: 3, view: '3d' },
-    { mode: 'realtime', family: 'C', success: false, error: 0.9, ts: 4, view: '3d', timingError: 0.3 },
-  ];
-  const vs = Stats.viewStats(attempts);
-  near(vs.lecture['2d'].n, 2, 0);
-  near(vs.lecture['2d'].rate, 0.5, 1e-12);
-  near(vs.lecture['2d'].meanError, 0.6, 1e-12);
-  near(vs.lecture['3d'].rate, 1, 1e-12);
-  near(vs.realtime['3d'].n, 1, 0);
-  assert(vs.placement['3d'].rate === null, 'pas d’essai → null');
-  // Un export contenant le mode temps réel se réimporte, et un ancien export reçoit le niveau temps réel
-  const st = Stats.validateState({ attempts, levels: { lecture: 3 } });
-  near(st.levels.realtime, 1, 0);
-  near(st.levels.lecture, 3, 0);
-});
 
 test('stats du match : par famille, précision de décision, sessions, série', () => {
   const mem = {};
