@@ -780,5 +780,55 @@ test('stats : champ « vue utilisée » et comparaison 2D / 3D', () => {
   near(st.levels.lecture, 3, 0);
 });
 
+test('stats du match : par famille, précision de décision, sessions, série', () => {
+  const mem = {};
+  const store = Stats.createStore({ getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => (mem[k] = String(v)) });
+  const ball = (o) => Object.assign({ session: 1, family: 'B', outcome: 'hit', type: 'afterGlass', bestType: 'afterGlass', decisionOk: true, quality: 0.8, placementError: 0.2, level: 1 }, o);
+  store.recordMatch(ball({}), 1);
+  store.recordMatch(ball({ type: 'afterGlass', bestType: 'halfVolley', decisionOk: false, quality: 0.4, placementError: 0.6 }), 0);
+  store.recordMatch(ball({ type: 'afterGlass', bestType: 'halfVolley', decisionOk: false, quality: 0.5, placementError: 0.4 }), 0);
+  store.recordMatch(ball({ outcome: 'miss', reason: 'late', type: undefined, quality: undefined, placementError: undefined, family: 'direct', session: 2 }), 0);
+  const fs = Stats.matchFamilyStats(store.state.match.balls);
+  near(fs.B.rate, 1, 1e-12);
+  near(fs.B.meanQuality, (0.8 + 0.4 + 0.5) / 3, 1e-12);
+  near(fs.B.meanPlacementError, 0.4, 1e-12);
+  near(fs.direct.rate, 0, 1e-12);
+  const ds = Stats.decisionStats(store.state.match.balls);
+  near(ds.accuracy, 1 / 3, 1e-12);
+  assert(ds.byChosen.afterGlass.topBetter === 'halfVolley');
+  near(ds.byChosen.afterGlass.topBetterRate, 2 / 3, 1e-12);
+  const ss = Stats.sessionStats(store.state.match.balls);
+  assert(ss.sessions === 2 && ss.last === 1 && ss.average === 2);
+  near(store.state.match.bestStreak, 1, 0);
+  // Export / import avec les données du match ; un ancien export sans match reste valide
+  const back = Stats.validateState(JSON.parse(store.exportJSON()));
+  near(back.match.balls.length, 4, 0);
+  near(Stats.validateState({ attempts: [] }).match.balls.length, 0, 0);
+  let threw = false;
+  try {
+    Stats.validateState({ attempts: [], match: { balls: [{ ts: 1, family: 'Z', outcome: 'hit' }] } });
+  } catch (e) {
+    threw = true;
+  }
+  assert(threw, 'famille inconnue refusée');
+});
+
+test('stats du match : répétition espacée et difficulté adaptative (80 % / 50 %)', () => {
+  const balls = [];
+  for (let i = 0; i < 30; i++) for (const f of Stats.MATCH_FAMILIES) balls.push({ family: f, outcome: f === 'C' ? 'miss' : 'hit' });
+  const w = Stats.matchFamilyWeights(balls);
+  assert(w.C > 2 * w.A, JSON.stringify(w));
+  const mk = (n, rate) => Array.from({ length: n }, (_, i) => ({ outcome: i < Math.round(n * rate) ? 'hit' : 'miss' }));
+  const D = CFG.difficulty;
+  near(Stats.matchNextLevel(mk(10, 0.9), 2, D), 3, 0);
+  near(Stats.matchNextLevel(mk(10, 0.8), 2, D), 2, 0);
+  near(Stats.matchNextLevel(mk(10, 0.6), 2, D), 2, 0);
+  near(Stats.matchNextLevel(mk(10, 0.4), 2, D), 1, 0);
+  near(Stats.matchNextLevel(mk(4, 0), 2, D), 2, 0, 'pas assez de balles');
+  // Les poids et le niveau sont bien utilisés par l'échange
+  const st = R.createRally({ seed: 5, weights: { direct: 0, A: 0, B: 0, C: 1, D: 0 }, level: 4 });
+  assert(st.shot.family === 'C' && st.shot.level === 4);
+});
+
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 if (failed) process.exit(1);

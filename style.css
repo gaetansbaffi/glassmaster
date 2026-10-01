@@ -246,3 +246,4 @@ button, label.btn { font: inherit; }
 .match-settings summary { min-height: 44px; display: flex; align-items: center; font-weight: 700; cursor: pointer; }
 .match-settings .toggle { margin-left: 0; display: flex; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; font-size: 14px; color: var(--text-2); }
+.subhead { font-size: 15px; margin: 14px 0 4px; }

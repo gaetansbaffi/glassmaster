@@ -783,7 +783,7 @@
   }
 
   function refreshHeader() {
-    $('streakVal').textContent = Stats.streak(store.state.attempts, Date.now());
+    $('streakVal').textContent = Stats.streak(store.state.attempts.concat(store.state.match.balls), Date.now());
     const lvl = app.mode === 'stats' ? null : store.state.levels[app.mode];
     $('levelChip').hidden = lvl == null;
     if (lvl != null) $('levelVal').textContent = lvl;
@@ -910,7 +910,13 @@
   function startMatch() {
     match.session = Date.now();
     const seed = matchSeed();
-    match.state = R.createRally({ seed, auto: matchSettings().auto, player: CFG.player.start });
+    match.state = R.createRally({
+      seed,
+      auto: matchSettings().auto,
+      player: CFG.player.start,
+      level: store.state.levels.match || 1,
+      weights: Stats.matchFamilyWeights(store.state.match.balls),
+    });
     match.detail = null;
     match.target = null;
     $('seedInfo').textContent = `Graine ${seed}`;
@@ -990,8 +996,33 @@
     }
   }
 
-  /** Enregistrement de la balle (étendu par les statistiques du match). */
-  function recordMatchBall() {}
+  /** Enregistre la balle, puis ajuste la pondération des familles et le niveau de l'échange. */
+  function recordMatchBall(r) {
+    const ms = matchSettings();
+    const rec = store.recordMatch(
+      {
+        session: match.session,
+        family: r.family,
+        outcome: r.outcome,
+        reason: r.reason,
+        type: r.type,
+        quality: typeof r.quality === 'number' ? Math.round(r.quality * 1000) / 1000 : undefined,
+        bestType: r.bestType,
+        bestQuality: Math.round(r.bestQuality * 1000) / 1000,
+        decisionOk: r.outcome === 'hit' ? r.decisionOk : undefined,
+        placementError: typeof r.placementError === 'number' ? Math.round(r.placementError * 100) / 100 : undefined,
+        level: r.level,
+        view: is3D() ? '3d' : '2d',
+        speed: ms.speed,
+        auto: ms.auto,
+      },
+      match.state.streak,
+      CFG.difficulty
+    );
+    match.state = R.withSettings(match.state, { weights: Stats.matchFamilyWeights(store.state.match.balls), level: rec.level });
+    if (rec.levelChange > 0) toast(`Match : niveau ${rec.level}, balles plus rapides et angles plus fermés`);
+    if (rec.levelChange < 0) toast(`Match : retour au niveau ${rec.level}`);
+  }
 
   function showMatchFeedback(r) {
     const fb = Q.feedback(r, SG.FAMILIES[r.family].name, CFG);
@@ -1206,7 +1237,7 @@
     const n = atts.length;
     const ok = atts.filter((a) => a.success).length;
     const kpis = [
-      [Stats.streak(atts, Date.now()) + ' j', 'Série de jours'],
+      [Stats.streak(atts.concat(st.match.balls), Date.now()) + ' j', 'Série de jours'],
       [n, 'Exercices'],
       [n ? Math.round((ok / n) * 100) + ' %' : '—', 'Réussite globale'],
       [Stats.MODES.map((m) => st.levels[m]).join('·'), 'Niveaux L · P · D · T'],
@@ -1229,8 +1260,48 @@
     let vh = '<thead><tr><th>Mode</th><th class="num">Vue 2D</th><th class="num">Vue 3D</th></tr></thead><tbody>';
     for (const m of Stats.MODES) vh += `<tr><td>${names[m]}</td><td class="num">${cell(vs[m]['2d'])}</td><td class="num">${cell(vs[m]['3d'])}</td></tr>`;
     $('viewTable').innerHTML = vh + '</tbody>';
+    renderMatchStats();
     $('chartLegend').innerHTML = S.FAMILY_IDS.map((f) => `<span><span class="swatch" style="background:var(--series-${f})"></span>${f} · ${S.FAMILIES[f].short}</span>`).join('');
     drawChart();
+  }
+
+  const SHOT_NAMES = window.GlassQuality.SHOT_NAMES;
+  const pct = (v) => (v == null ? '—' : Math.round(v * 100) + ' %');
+
+  function renderMatchStats() {
+    const m = store.state.match;
+    const balls = m.balls;
+    const hits = balls.filter((b) => b.outcome === 'hit').length;
+    const ss = Stats.sessionStats(balls);
+    const ds = Stats.decisionStats(balls);
+    const kpis = [
+      [balls.length, 'Balles jouées'],
+      [pct(balls.length ? hits / balls.length : null), 'Balles renvoyées'],
+      [m.bestStreak, 'Meilleure série'],
+      [ss.sessions ? `${ss.last} · ${Math.round(ss.average)}` : '—', 'Balles / session (dern. · moy.)'],
+      [pct(ds.accuracy), 'Précision de décision'],
+      [store.state.levels.match || 1, 'Niveau du match'],
+    ];
+    $('matchKpis').innerHTML = kpis.map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
+    const fs = Stats.matchFamilyStats(balls);
+    let html = '<thead><tr><th>Famille</th><th class="num">Réussite</th><th class="num">Qualité</th><th class="num">Placement</th></tr></thead><tbody>';
+    for (const f of Stats.MATCH_FAMILIES) {
+      const x = fs[f];
+      html += `<tr><td>${SG.FAMILIES[f].short}<br><small>${x.n} balle${x.n > 1 ? 's' : ''}</small></td><td class="num">${pct(x.rate)}</td>` +
+        `<td class="num">${x.meanQuality == null ? '—' : fmt(x.meanQuality, 2)}</td><td class="num">${x.meanPlacementError == null ? '—' : fmt(x.meanPlacementError, 2) + ' m'}</td></tr>`;
+    }
+    $('matchFamilyTable').innerHTML = html + '</tbody>';
+    const ul = $('decisionList');
+    ul.innerHTML = '';
+    for (const t of Q.SHOT_TYPES) {
+      const c = ds.byChosen[t];
+      if (!c.n) continue;
+      const li = document.createElement('li');
+      li.textContent = `${SHOT_NAMES[t]} (${c.n}) : bon choix ${pct(c.accuracy)}` +
+        (c.topBetter ? ` — tu choisis ${SHOT_NAMES[t].toLowerCase()} alors qu’une ${SHOT_NAMES[c.topBetter].toLowerCase()} était meilleure ${pct(c.topBetterRate)} du temps.` : '.');
+      ul.append(li);
+    }
+    if (!ul.children.length) ul.innerHTML = '<li>Pas encore de frappe en match.</li>';
   }
 
   let chartGeom = null;

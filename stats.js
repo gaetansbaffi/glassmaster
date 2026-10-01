@@ -11,14 +11,18 @@
   const FAMILY_IDS = ['A', 'B', 'C', 'D'];
   const SIDES = ['left', 'right'];
   const MAX_ATTEMPTS = 5000;
+  const MATCH_FAMILIES = ['direct', 'A', 'B', 'C', 'D'];
+  const SHOT_TYPES = ['volley', 'halfVolley', 'beforeGlass', 'afterGlass'];
+  const MAX_MATCH_BALLS = 5000;
 
   function defaultState() {
     return {
       version: 1,
       attempts: [],
-      levels: { lecture: 1, placement: 1, decision: 1, realtime: 1 },
+      levels: { lecture: 1, placement: 1, decision: 1, realtime: 1, match: 1 },
       levelSince: { lecture: 0, placement: 0, decision: 0, realtime: 0 },
       settings: { reveal: false, view: '2d', freeLook: false, trail: true },
+      match: { balls: [], bestStreak: 0, levelSince: 0 },
     };
   }
 
@@ -157,6 +161,92 @@
     });
   }
 
+  /* ---------- Match infini ---------- */
+
+  /** Balle « réussie » : renvoyée dans le camp adverse. */
+  const matchOk = (b) => b.outcome === 'hit';
+
+  /** Répétition espacée par famille : poids = 1 + 4 × taux d'échec récent + bonus d'oubli. */
+  function matchFamilyWeights(balls) {
+    const out = {};
+    for (const f of MATCH_FAMILIES) {
+      let lastIdx = -1;
+      const recent = [];
+      for (let i = balls.length - 1; i >= 0 && recent.length < 8; i--) {
+        if (balls[i].family !== f) continue;
+        if (lastIdx < 0) lastIdx = i;
+        recent.push(balls[i]);
+      }
+      const fails = recent.filter((b) => !matchOk(b)).length;
+      const failRate = (fails + 1) / (recent.length + 2);
+      const since = lastIdx < 0 ? 24 : balls.length - 1 - lastIdx;
+      out[f] = 1 + 4 * failRate + Math.min(2, since / 12);
+    }
+    return out;
+  }
+
+  /** Difficulté du match : +1 au-delà de `up` de réussite sur `window` balles, −1 sous `down`. */
+  function matchNextLevel(ballsAtLevel, level, d) {
+    d = d || { window: 10, up: 0.8, down: 0.5 };
+    const last = ballsAtLevel.slice(-d.window);
+    if (!last.length) return level;
+    const rate = last.filter(matchOk).length / last.length;
+    if (last.length >= d.window && rate > d.up) return Math.min(5, level + 1);
+    if (last.length >= Math.ceil(d.window * 0.6) && rate < d.down) return Math.max(1, level - 1);
+    return level;
+  }
+
+  const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+
+  /** Par famille : taux de réussite, qualité moyenne et erreur de placement moyenne (frappes). */
+  function matchFamilyStats(balls) {
+    const out = {};
+    for (const f of MATCH_FAMILIES) {
+      const list = balls.filter((b) => b.family === f);
+      const hits = list.filter((b) => typeof b.quality === 'number');
+      out[f] = {
+        n: list.length,
+        rate: list.length ? list.filter(matchOk).length / list.length : null,
+        meanQuality: mean(hits.map((b) => b.quality)),
+        meanPlacementError: mean(hits.filter((b) => typeof b.placementError === 'number').map((b) => b.placementError)),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Précision de décision sur les balles frappées : part des coups dont le type était (quasi) le meilleur,
+   * et, par type choisi, quel autre type était meilleur et à quelle fréquence.
+   */
+  function decisionStats(balls) {
+    const hits = balls.filter((b) => b.type && b.bestType);
+    const byChosen = {};
+    for (const t of SHOT_TYPES) {
+      const list = hits.filter((b) => b.type === t);
+      const wrong = list.filter((b) => !b.decisionOk);
+      const better = {};
+      for (const b of wrong) better[b.bestType] = (better[b.bestType] || 0) + 1;
+      let top = null;
+      for (const k in better) if (!top || better[k] > better[top]) top = k;
+      byChosen[t] = {
+        n: list.length,
+        accuracy: list.length ? (list.length - wrong.length) / list.length : null,
+        topBetter: top,
+        topBetterRate: top ? better[top] / list.length : 0,
+      };
+    }
+    return { n: hits.length, accuracy: hits.length ? hits.filter((b) => b.decisionOk).length / hits.length : null, byChosen };
+  }
+
+  /** Balles par session (une session = une entrée dans le mode Match). */
+  function sessionStats(balls) {
+    const sessions = new Map();
+    for (const b of balls) sessions.set(b.session, (sessions.get(b.session) || 0) + 1);
+    const counts = Array.from(sessions.values());
+    const lastKey = balls.length ? balls[balls.length - 1].session : null;
+    return { sessions: counts.length, last: lastKey == null ? 0 : sessions.get(lastKey), average: mean(counts) };
+  }
+
   function validateState(s) {
     if (!s || typeof s !== 'object' || !Array.isArray(s.attempts)) throw new Error('Fichier invalide : liste « attempts » absente');
     for (const a of s.attempts) {
@@ -171,6 +261,23 @@
       levels: Object.assign(d.levels, s.levels),
       levelSince: Object.assign(d.levelSince, s.levelSince),
       settings: Object.assign(d.settings, s.settings),
+      match: validateMatch(s.match),
+    };
+  }
+
+  function validateMatch(m) {
+    const d = { balls: [], bestStreak: 0, levelSince: 0 };
+    if (!m) return d;
+    if (!Array.isArray(m.balls)) throw new Error('Fichier invalide : balles de match absentes');
+    for (const b of m.balls) {
+      if (typeof b.ts !== 'number' || MATCH_FAMILIES.indexOf(b.family) < 0 || (b.outcome !== 'hit' && b.outcome !== 'miss')) {
+        throw new Error('Fichier invalide : balle de match mal formée');
+      }
+    }
+    return {
+      balls: m.balls.slice(-MAX_MATCH_BALLS),
+      bestStreak: Math.max(0, +m.bestStreak || 0),
+      levelSince: Math.min(m.balls.length, Math.max(0, +m.levelSince || 0)),
     };
   }
 
@@ -213,6 +320,28 @@
         store.save();
         return { attempt, levelChange: changed, level: state.levels[mode] };
       },
+      /**
+       * Enregistre une balle du match ; met à jour la meilleure série et le niveau.
+       * Retourne { levelChange, level }.
+       */
+      recordMatch(ball, streak, difficulty) {
+        const m = state.match;
+        m.balls.push(Object.assign({ ts: Date.now() }, ball));
+        if (m.balls.length > MAX_MATCH_BALLS) {
+          const drop = m.balls.length - MAX_MATCH_BALLS;
+          m.balls.splice(0, drop);
+          m.levelSince = Math.max(0, m.levelSince - drop);
+        }
+        m.bestStreak = Math.max(m.bestStreak, streak || 0);
+        const lvl = state.levels.match || 1;
+        const next = matchNextLevel(m.balls.slice(m.levelSince).filter((b) => b.level === lvl), lvl, difficulty);
+        if (next !== lvl) {
+          state.levels.match = next;
+          m.levelSince = m.balls.length;
+        }
+        store.save();
+        return { levelChange: next - lvl, level: next };
+      },
       setSetting(k, v) {
         state.settings[k] = v;
         store.save();
@@ -245,6 +374,12 @@
     dailySeries,
     viewOf,
     viewStats,
+    MATCH_FAMILIES,
+    matchFamilyWeights,
+    matchNextLevel,
+    matchFamilyStats,
+    decisionStats,
+    sessionStats,
     validateState,
     createStore,
   };
