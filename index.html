@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1720">
+  <meta name="description" content="Glass Lab — entraînement à la lecture des rebonds sur les vitres au padel.">
+  <title>Glass Lab</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">Glass<span>Lab</span></h1>
+    <div class="chips">
+      <span class="chip" id="streakChip" title="Jours consécutifs d'entraînement">🔥 <b id="streakVal">0</b> j</span>
+      <span class="chip" id="levelChip" title="Niveau de difficulté du mode">Niv. <b id="levelVal">1</b></span>
+    </div>
+  </header>
+
+  <main id="trainView" class="view">
+    <div class="toolbar">
+      <span class="family-tag" id="familyTag" hidden></span>
+      <label class="toggle">
+        <input type="checkbox" id="revealToggle">
+        <span>Révéler la trajectoire</span>
+      </label>
+    </div>
+
+    <div class="stage">
+      <canvas id="court" aria-label="Vue de dessus du demi-court de défense"></canvas>
+      <div class="gauge-wrap">
+        <canvas id="gauge" aria-label="Jauge de hauteur de balle (profil latéral)"></canvas>
+      </div>
+    </div>
+
+    <p class="prompt" id="prompt" aria-live="polite">Chargement…</p>
+
+    <div class="actions" id="actions">
+      <div class="decision-buttons" id="decisionButtons" hidden>
+        <button class="btn choice" data-choice="volley">Volée</button>
+        <button class="btn choice" data-choice="glass">Laisser rebondir<br><small>jouer la sortie de vitre</small></button>
+        <button class="btn choice" data-choice="second">Reculer<br><small>attendre le 2e rebond (2e vitre)</small></button>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="replayBtn" aria-label="Rejouer l'animation">↺ Rejouer</button>
+        <button class="btn primary" id="mainBtn" disabled>Valider</button>
+      </div>
+    </div>
+    <section class="feedback" id="feedback" hidden aria-live="polite">
+      <div class="result" id="result"></div>
+      <ul class="explain" id="explain"></ul>
+      <div class="rule" id="rule"></div>
+    </section>
+    <p class="seed" id="seedInfo"></p>
+  </main>
+
+  <main id="statsView" class="view" hidden>
+    <section class="card">
+      <h2>Progression</h2>
+      <div class="kpis" id="kpis"></div>
+    </section>
+    <section class="card">
+      <h2>Par famille</h2>
+      <table class="stats-table" id="familyTable"></table>
+    </section>
+    <section class="card">
+      <h2>Réussite par jour</h2>
+      <p class="muted small">Taux de réussite quotidien par famille (14 derniers jours d'entraînement).</p>
+      <div class="legend" id="chartLegend"></div>
+      <div class="chart-wrap">
+        <canvas id="chart" aria-label="Évolution du taux de réussite par famille"></canvas>
+        <div class="tooltip" id="chartTip" hidden></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Données</h2>
+      <p class="muted small">Tout est stocké dans ce navigateur. Exporte pour sauvegarder ou changer d'appareil.</p>
+      <div class="row wrap">
+        <button class="btn" id="exportBtn">Exporter (JSON)</button>
+        <label class="btn" for="importFile">Importer…</label>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+        <button class="btn danger" id="resetBtn">Réinitialiser</button>
+      </div>
+      <p class="small" id="dataMsg" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Modes">
+    <button class="tab active" data-mode="lecture"><span class="ico">◎</span>Lecture</button>
+    <button class="tab" data-mode="placement"><span class="ico">⇲</span>Placement</button>
+    <button class="tab" data-mode="decision"><span class="ico">⑂</span>Décision</button>
+    <button class="tab" data-mode="stats"><span class="ico">▤</span>Stats</button>
+  </nav>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="physics.js"></script>
+  <script src="scenarios.js"></script>
+  <script src="stats.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
