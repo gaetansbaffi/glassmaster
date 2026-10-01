@@ -105,6 +105,9 @@ button, label.btn { font: inherit; }
   display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 10px; border-radius: 999px;
   background: rgba(15, 23, 32, 0.55); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
 }
+.camsel { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 4px; padding: 4px; border-radius: 14px; background: rgba(15, 23, 32, 0.55); z-index: 2; }
+.cam-btn { min-height: 44px; min-width: 72px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: #fff; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+.cam-btn.active { background: #fff; color: #0e141b; }
 .pill input { width: 18px; height: 18px; margin: 0; accent-color: #2bb58a; }
 .joy {
   position: absolute; left: 14px; bottom: 14px; width: 112px; height: 112px; border-radius: 50%;

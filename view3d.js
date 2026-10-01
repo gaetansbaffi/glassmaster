@@ -213,6 +213,60 @@ function buildCourt() {
   return group;
 }
 
+/* ---------- Trajectoires et repères (replay) ---------- */
+
+/**
+ * Polyligne paramétrée par l'indice des points (u = i / (n − 1)), sans lissage : les rebonds
+ * restent anguleux et le j-ième segment du tube correspond exactement au j-ième intervalle de temps.
+ */
+class IndexPolyline extends THREE.Curve {
+  constructor(points) {
+    super();
+    this.points = points;
+  }
+  getPoint(u, target = new THREE.Vector3()) {
+    const n = this.points.length;
+    const f = Math.min(Math.max(u, 0), 1) * (n - 1);
+    const i = Math.min(n - 2, Math.floor(f));
+    return target.copy(this.points[i]).lerp(this.points[i + 1], f - i);
+  }
+  getUtoTmapping(u) {
+    return u; // pas de reparamétrage par la longueur
+  }
+}
+
+const RADIAL = 6;
+
+/**
+ * Tube suivant la trajectoire, échantillonné régulièrement dans le temps (contacts inclus).
+ * Retourne { mesh, times } : times[j] = instant du j-ième point, pour limiter l'affichage à t.
+ */
+function trajectoryTube(points, times, radius, material) {
+  // Supprime les points confondus (un contact tombant sur un échantillon) : tangente indéfinie sinon
+  const P2 = [points[0]];
+  const T2 = [times[0]];
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].distanceToSquared(P2[P2.length - 1]) < 1e-8) continue;
+    P2.push(points[i]);
+    T2.push(times[i]);
+  }
+  const geo = new THREE.TubeGeometry(new IndexPolyline(P2), P2.length - 1, radius, RADIAL, false);
+  return { mesh: new THREE.Mesh(geo, material), times: T2 };
+}
+
+/** Nombre d'indices de tube à afficher pour montrer la trajectoire jusqu'à l'instant t. */
+function tubeCountAt(tube, t) {
+  const times = tube.times;
+  let lo = 0;
+  let hi = times.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (times[mid] <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo * RADIAL * 6;
+}
+
 /* ---------- Contrôleur de vue ---------- */
 
 /**
@@ -280,6 +334,19 @@ function create(opts) {
   depthLine.rotation.x = -Math.PI / 2;
   depthLine.visible = false;
   scene.add(depthLine);
+
+  // Trajectoire réelle (replay) et trajectoire révélée (débutants)
+  const pathMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
+  const revealMat = new THREE.MeshBasicMaterial({ color: COLORS.ball, transparent: true, opacity: 0.45, depthWrite: false });
+  let path = null;
+  let revealPath = null;
+  // Repères du résultat, reconstruits à chaque nouvelle réponse
+  const overlay = new THREE.Group();
+  scene.add(overlay);
+  let overlayFor = null;
+  const playerFig = figure(0xffffff);
+  playerFig.visible = false;
+  scene.add(playerFig);
 
   const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 90);
   const size = { w: 1, h: 1 };
@@ -431,6 +498,25 @@ function create(opts) {
     return { position: eye, target: G.vec.add(eye, dir), up: { x: 0, y: 0, z: 1 } };
   }
 
+  /** Vues de replay : dessus (comme la 2D) et côté (profil de la trajectoire). */
+  function fixedCamera(mode) {
+    const aspect = size.w / size.h;
+    if (mode === 'top') {
+      const dist = 16;
+      const half = 5.9; // demi-court (5 m) + marge
+      const vHalf = Math.max(half, half / aspect);
+      return {
+        cw: { position: { x: COURT_W / 2, y: 5, z: dist }, target: { x: COURT_W / 2, y: 5, z: 0 }, up: { x: 0, y: 1, z: 0 } },
+        fov: (2 * Math.atan(vHalf / dist) * 180) / Math.PI,
+      };
+    }
+    const dist = 14;
+    return {
+      cw: { position: { x: COURT_W + dist - 5, y: 5, z: 1.6 }, target: { x: COURT_W / 2, y: 5, z: 1.4 }, up: { x: 0, y: 0, z: 1 } },
+      fov: G.verticalFov(48, aspect, 20, 90),
+    };
+  }
+
   function applyCamera(cw, fovDeg) {
     camera.aspect = size.w / size.h;
     camera.fov = fovDeg;
@@ -447,6 +533,114 @@ function create(opts) {
     if (depthLine.visible) depthLine.position.copy(sceneVec({ x: COURT_W / 2, y: q.depth, z: 0.008 }));
     answerMarker.visible = app.mode === 'lecture' && !!app.answer;
     if (answerMarker.visible) answerMarker.position.copy(sceneVec({ x: app.answer.x, y: app.answer.y, z: 0 }));
+  }
+
+  function buildPaths(app) {
+    for (const p of [path, revealPath]) if (p) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+    }
+    const times = [];
+    const dtS = 1 / 90;
+    for (let t = app.tStart; t < app.sc.endT; t += dtS) times.push(t);
+    for (const c of app.sc.sim.contacts) times.push(c.t);
+    times.push(app.sc.endT);
+    times.sort((a, b) => a - b);
+    const pts = times.map((t) => sceneVec(app.ballAt(t)));
+    path = trajectoryTube(pts, times, 0.016, pathMat);
+    revealPath = trajectoryTube(pts, times, 0.022, revealMat);
+    scene.add(path.mesh);
+    scene.add(revealPath.mesh);
+  }
+
+  function addRing(p, color, r0, r1, opacity) {
+    const m = new THREE.Mesh(
+      new THREE.RingGeometry(r0, r1, 40),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: opacity == null ? 0.9 : opacity, side: THREE.DoubleSide, depthWrite: false })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.copy(sceneVec({ x: p.x, y: p.y, z: 0.012 }));
+    overlay.add(m);
+    return m;
+  }
+
+  function addMarker(p, color) {
+    const m = markerGroup(color);
+    m.visible = true;
+    m.position.copy(sceneVec({ x: p.x, y: p.y, z: 0 }));
+    overlay.add(m);
+  }
+
+  function addDot(p, color, r) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r || 0.09, 12, 8), new THREE.MeshBasicMaterial({ color }));
+    m.position.copy(sceneVec(p));
+    overlay.add(m);
+  }
+
+  function addGroundLine(a, b, color) {
+    const g = new THREE.BufferGeometry().setFromPoints([sceneVec({ x: a.x, y: a.y, z: 0.02 }), sceneVec({ x: b.x, y: b.y, z: 0.02 })]);
+    overlay.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color })));
+  }
+
+  /** Superpose la réponse du joueur et la vérité au replay (reconstruit quand la réponse change). */
+  function rebuildOverlay(app) {
+    for (const o of overlay.children.slice()) {
+      overlay.remove(o);
+      o.traverse((c) => {
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) c.material.dispose();
+      });
+    }
+    const res = app.result;
+    if (!res) return;
+    const GREEN = 0x3ef08f;
+    const ORANGE = 0xff9f1c;
+    if (app.mode === 'lecture') {
+      addMarker(app.question.target, GREEN);
+      addGroundLine(app.answer, app.question.target, 0xffffff);
+    } else if (app.mode === 'placement' || app.mode === 'realtime') {
+      const pts = res.zone.points.map(sceneVec);
+      if (pts.length > 1) {
+        const tube = trajectoryTube(pts, res.zone.points.map((p) => p.t), 0.05, new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.75 }));
+        overlay.add(tube.mesh);
+      }
+      addDot(res.hitPoint, GREEN, 0.08);
+      addRing(res.ideal, GREEN, 0.28, 0.36);
+      const pos = res.player || app.player;
+      addRing(pos, ORANGE, 0.3, 1.1, 0.22); // zone à distance de bras
+      if (app.mode === 'realtime' && res.strikeT != null) addDot(app.ballAt(res.strikeT), ORANGE, 0.08);
+    } else if (app.mode === 'decision') {
+      for (const k of ['volley', 'glass', 'second']) {
+        const o = res.options[k];
+        if (!o.pt || o.q <= 0) continue;
+        addDot(o.pt, k === res.best ? GREEN : o.q >= 0.6 ? 0xffe066 : ORANGE, 0.09);
+      }
+    }
+  }
+
+  function updateOverlays(app) {
+    if (!app.sc) return;
+    if (app.sc !== (path && path.sc)) {
+      buildPaths(app);
+      path.sc = app.sc;
+    }
+    const replaying = app.phase === 'playing' || app.phase === 'result';
+    path.mesh.visible = replaying;
+    if (replaying) path.mesh.geometry.setDrawRange(0, tubeCountAt(path, app.t));
+    revealPath.mesh.visible = app.phase === 'answer' && !!getSettings().reveal;
+    const key = app.phase === 'result' || app.phase === 'playing' ? app.result : null;
+    if (key !== overlayFor) {
+      overlayFor = key;
+      rebuildOverlay(app);
+    }
+    overlay.visible = !!key;
+    // Avatar du joueur : visible dans les vues de replay (en 1re personne, c'est la caméra)
+    const showFig = camMode !== 'fp' && app.player && app.mode !== 'lecture';
+    playerFig.visible = !!showFig;
+    if (showFig) {
+      const pos = (app.result && app.result.player) || app.player;
+      playerFig.position.copy(sceneVec({ x: pos.x, y: pos.y, z: 0 }));
+    }
   }
 
   // Compteur d'images optionnel (?fps dans l'URL)
@@ -469,13 +663,18 @@ function create(opts) {
     const s = app.sc ? app.ballAt(app.t) : null;
     updateBall(app, s, settings.trail);
     updateMarkers(app);
-    const cw = updateFirstPerson(app, s, dt);
-    applyCamera(cw, G.verticalFov(75, size.w / size.h));
+    updateOverlays(app);
+    const fpCam = updateFirstPerson(app, s, dt);
+    if (camMode === 'fp') applyCamera(fpCam, G.verticalFov(75, size.w / size.h));
+    else {
+      const f = fixedCamera(camMode);
+      applyCamera(f.cw, f.fov);
+    }
     renderer.render(scene, camera);
     if (fpsEl) {
       fps.n++;
       if (now - fps.t > 500) {
-        fpsEl.textContent = Math.round((fps.n * 1000) / (now - fps.t)) + ' i/s';
+        fpsEl.textContent = `${Math.round((fps.n * 1000) / (now - fps.t))} i/s · ${renderer.info.render.calls} appels`;
         fps.n = 0;
         fps.t = now;
       }
@@ -495,9 +694,17 @@ function create(opts) {
       keys.clear();
       renderer.setAnimationLoop(null);
     },
+    /** Vue de caméra : 'fp' (première personne), 'top' (dessus) ou 'side' (côté). */
+    setCameraMode(mode) {
+      camMode = mode;
+    },
+    get cameraMode() {
+      return camMode;
+    },
     /** Nouveau scénario : le regard se recale immédiatement, l'adversaire se place sur la frappe. */
     newScenario() {
       look.ready = false;
+      camMode = 'fp';
       const app = getApp();
       const tau = G.preNetDuration(app.sc.init, app.sc.sim.params.g);
       const hit = G.ballistic(app.sc.init, -tau, app.sc.sim.params.g);

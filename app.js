@@ -744,8 +744,8 @@
     if (phase === 'intro') prompt = mode === 'realtime' ? 'Attention, la balle part…' : 'Observe la balle…';
     else if (phase === 'live') prompt = MODE_PROMPTS.realtime;
     else if (phase === 'answer') prompt = mode === 'lecture' ? app.question.label : is3D() && MODE_PROMPTS_3D[mode] ? MODE_PROMPTS_3D[mode] : MODE_PROMPTS[mode];
-    else if (phase === 'playing') prompt = 'Trajectoire réelle (ralenti)…';
-    else if (phase === 'result') prompt = mode === 'lecture' ? app.question.label : MODE_PROMPTS[mode];
+    else if (phase === 'playing') prompt = is3D() ? 'Trajectoire réelle (ralenti) — change de vue en bas de la scène.' : 'Trajectoire réelle (ralenti)…';
+    else if (phase === 'result') prompt = mode === 'lecture' ? app.question.label : is3D() && MODE_PROMPTS_3D[mode] ? MODE_PROMPTS_3D[mode] : MODE_PROMPTS[mode];
     if (phase === 'answer' && mode === 'lecture' && !app.answer) prompt += is3D() ? ' Touche le sol de la scène.' : ' Touche le terrain.';
     $('prompt').textContent = prompt;
 
@@ -763,6 +763,12 @@
       main.hidden = false;
       main.textContent = 'Valider';
       main.disabled = phase !== 'answer' || (mode === 'lecture' && !app.answer);
+    }
+    const camSel = $('camSel');
+    camSel.hidden = !(is3D() && (phase === 'playing' || phase === 'result'));
+    if (three.ctrl) {
+      const cm = three.ctrl.cameraMode;
+      camSel.querySelectorAll('.cam-btn').forEach((b) => b.classList.toggle('active', b.dataset.cam === cm));
     }
     $('replayBtn').disabled = phase === 'intro' || phase === 'playing' || phase === 'live' || (mode === 'realtime' && phase !== 'result');
     refreshHeader();
@@ -1169,6 +1175,14 @@
     el.checked = !!store.state.settings[key];
     el.addEventListener('change', () => store.setSetting(key, el.checked));
   }
+
+  document.querySelectorAll('.cam-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!three.ctrl) return;
+      three.ctrl.setCameraMode(b.dataset.cam);
+      updateUI();
+    })
+  );
 
   function setView(view) {
     if (view === '3d' && three.status !== 'ready' && three.status !== 'loading') return;
