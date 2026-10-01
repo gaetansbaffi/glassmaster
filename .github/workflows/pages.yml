@@ -25,7 +25,7 @@ jobs:
           node-version: 22
 
       - name: Tests
-        run: node test.js
+        run: node test/run.js
 
       - name: Publier sur gh-pages
         env:
