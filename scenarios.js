@@ -45,6 +45,7 @@
   const PLAYER_DEPTH = 3.0;
 
   const lerp = (a, b, k) => a + (b - a) * k;
+  const fmt = (n, d) => n.toFixed(d == null ? 1 : d).replace('.', ',');
   const deg = (r) => (r * 180) / Math.PI;
   const rad = (d) => (d * Math.PI) / 180;
 
@@ -233,13 +234,13 @@
     // Volée : la balle doit passer la ligne du joueur avant de rebondir, à hauteur confortable
     const cross = P.crossDepthIncoming(sim, PLAYER_DEPTH, 0, f0.t);
     if (!cross) {
-      opts.volley = { q: 0, why: `la balle rebondit avant ta ligne (rebond à ${f0.pos.y.toFixed(1)} m du fond)` };
+      opts.volley = { q: 0, why: `la balle rebondit avant ta ligne (rebond à ${fmt(f0.pos.y)} m du fond)` };
     } else {
       const h = cross.z;
       const v = P.speed(cross);
       let q = h >= 0.9 && h <= 1.5 ? 1 : h < 0.6 || h > 1.9 ? 0 : h < 0.9 ? (h - 0.6) / 0.3 : (1.9 - h) / 0.4;
       if (v > 20) q *= 0.7;
-      opts.volley = { q, pt: cross, why: `balle à ${h.toFixed(2)} m au passage de ta ligne, ${(v * 3.6).toFixed(0)} km/h` };
+      opts.volley = { q, pt: cross, why: `balle à ${fmt(h, 2)} m au passage de ta ligne, ${fmt(v * 3.6, 0)} km/h` };
     }
     const w = sc.walls;
     const nextAfterFirst = sim.contacts.find((c) => c.t > w[0].t).t;
@@ -259,7 +260,6 @@
     return Object.assign({ success, choice, error: null }, ev);
   }
 
-  const fmt = (n, d) => n.toFixed(d == null ? 1 : d).replace('.', ',');
   const WALL_NAMES = { back: 'vitre de fond', left: 'vitre latérale gauche', right: 'vitre latérale droite' };
 
   /** Explication courte générée à partir des données du scénario. */
