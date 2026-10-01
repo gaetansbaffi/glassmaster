@@ -68,11 +68,72 @@ La zone de déplacement est limitée à la moitié de défense (à 0,3 m des par
 - Performance visée : 60 i/s sur un téléphone récent (géométries simples, environ 20 à 30 appels de rendu par image, pixel ratio plafonné à 2, pas de post-traitement). Ajouter `?fps` à l'URL affiche la cadence et le nombre d'appels. Vérifié uniquement dans Chromium avec un rendu logiciel, **pas encore sur un vrai téléphone**.
 - **Repli** : si WebGL n'est pas disponible, si Three.js ne se charge pas (hors ligne, CDN bloqué) ou si la page est ouverte en `file://`, un message s'affiche et l'application reste en vue 2D ; le mode Temps réel est alors désactivé.
 
+## Mode Match infini
+
+Un échange continu pour travailler **le placement et la décision** : volée, demi-volée, avant vitre ou après vitre, y compris sur doubles vitres. Disponible en vue 2D et en vue 3D (onglet **Match**).
+
+### Principe
+
+1. L'adversaire envoie une balle (`shotgen.js`).
+2. Tu te déplaces pendant que la balle vole : clavier (flèches / ZQSD), joystick en 3D, doigt sur le terrain en 2D (le joueur court vers le point touché).
+3. Tu appuies sur **Frappe !** (ou Espace) quand tu estimes que c'est le bon moment : **le moment choisi décide du type de coup**.
+4. Si la balle est dans ta zone de frappe à ±250 ms près, la frappe part ; son type est déduit par `classifyShot` et la balle est **renvoyée automatiquement** : on entraîne la décision, pas le geste.
+5. Plus la qualité est haute, plus le renvoi est profond (de 2,5 m à 8,5 m derrière le filet adverse) ; sous 0,2, la frappe part dans le filet.
+6. L'adversaire renvoie une nouvelle balle, sans fin.
+7. Échange perdu si tu n'atteins pas la balle (2e rebond, balle directe passée derrière toi) ou si tu frappes hors de portée : feedback **trop tôt**, **trop tard**, **trop loin** ou **pas atteinte**, puis nouvelle balle.
+
+**Types de coups** (`classifyShot`, `quality.js`) : volée = aucun rebond ; après vitre = au moins un contact paroi ; demi-volée = dans les 150 ms après le rebond, balle sous 0,4 m et montante ; avant vitre = rebond sans paroi. Chaque type a sa propre zone de frappe (hauteur et portée).
+
+**Qualité** (0 à 1), somme pondérée de :
+- **hauteur** au contact (fenêtre idéale selon le type) ;
+- **placement** : joueur derrière la ligne de la balle (la balle devant lui, côté filet), pas en dessous, à distance de bras latéralement ;
+- **aisance** : marge de temps restante et vitesse de la balle (plus lente = mieux) ;
+- **dégagement** : distance aux parois au point de frappe (plus d'1 m = idéal, coin pénalisé).
+
+**Meilleur choix** : pour chaque balle, la trajectoire est échantillonnée ; pour chaque type de coup, on cherche le meilleur point de frappe **atteignable** (vitesse du joueur 4 m/s, réaction 250 ms) et sa qualité. Le meilleur type est comparé à ton choix.
+
+**Balles adverses** : familles directe, vitre de fond, fond puis latérale, latérale puis fond, latérale seule croisée. Échantillonnage par rejet déterministe : une balle n'est gardée que si elle suit la séquence de contacts de sa famille, retombe dans ta moitié et reste atteignable depuis ta position avec une qualité ≥ 0,45. Les familles où tu échoues le plus reviennent plus souvent ; le niveau monte au-delà de 80 % de balles renvoyées sur 10, descend sous 50 %.
+
+**Paramètres** (sous le terrain) : vitesse du jeu 50 / 75 / 100 %, frappe automatique (débutant : renvoi au premier passage dans la zone), afficher la trajectoire, afficher le meilleur point après chaque balle.
+
+**Feedback** : bandeau de 1,8 s, vert / orange / rouge, par exemple « Après vitre (0,45) — Fond puis latérale. Meilleur choix : Demi-volée (0,85), la balle mourait dans le coin. » Le bouton **Détail** met en pause et rejoue la balle au ralenti (trajectoire, ta position, meilleur point en vert, ta frappe en orange, vues 1re personne / dessus / côté en 3D) avec une **règle à retenir** chiffrée (angles d'incidence, vitesses après rebond, dégagement).
+
+**Graine fixable** : ajoute `?seed=123` à l'URL pour rejouer exactement la même suite de balles.
+
+### Constantes (`config.js`)
+
+| Constante | Valeur | Rôle |
+|---|---|---|
+| `player.speed` | 4 m/s | vitesse max du joueur (temps de jeu) |
+| `player.reactionTime` | 0,25 s | délai avant de pouvoir réagir à la frappe adverse |
+| `strike.timingTolerance` | ±0,25 s | tolérance entre l'appui et le passage dans la zone |
+| `zones.*` | voir fichier | hauteur min / idéale / max et portée par type de coup |
+| `classify.halfVolleyWindow` / `halfVolleyMaxZ` | 0,15 s / 0,4 m | définition de la demi-volée |
+| `quality.weights` | hauteur 0,35 · placement 0,3 · aisance 0,15 · dégagement 0,2 | pondération de la qualité |
+| `quality.playable` | 0,45 | qualité atteignable minimale d'une balle générée |
+| `quality.minReturn` | 0,2 | en dessous : frappe dans le filet |
+| `quality.streak` / `good` / `ok` | 0,6 / 0,7 / 0,45 | série, feedback vert, feedback orange |
+| `quality.decisionTolerance` | 0,1 | un choix est « juste » s'il vaut le meilleur à 0,1 près |
+| `placement.*`, `ease.*`, `clearance.*` | voir fichier | plages idéales de placement, d'aisance et de dégagement |
+| `returnShot.*` | 12,5 → 18,5 m | profondeur du renvoi selon la qualité, marge au-dessus du filet |
+| `difficulty` | 10 balles, 80 % / 50 % | difficulté adaptative |
+| `game.speeds`, `feedbackMs`, pauses | 50/75/100 %, 1,8 s | rythme du jeu |
+
+### Limites du mode Match
+
+- **On n'entraîne pas le geste** : direction, effet et puissance du renvoi ne dépendent que de la qualité ; le renvoi suit une parabole simple (pas de vitres côté adverse) et l'adversaire ne « joue » pas réellement la balle suivante.
+- La qualité et le « meilleur choix » sont des **heuristiques pédagogiques** (poids et plages dans `config.js`), pas un modèle validé par des entraîneurs ; ajuste-les si un cas te paraît faux.
+- Le joueur est un point qui accélère instantanément à 4 m/s ; pas de pas d'ajustement, de replacement automatique ni de coup droit / revers.
+- Les balles adverses partent toutes du filet (prolongées en arrière jusqu'à la frappe adverse) ; pas de lobs ni de smashs.
+- Même modèle physique que le reste de l'application : pas d'effet, pas de frottement de l'air.
+- En frappe automatique, le coup part au **premier** passage dans la zone, souvent une volée, même si ce n'est pas le meilleur choix.
+
 ## Progression
 
 - **Répétition espacée** : chaque configuration (famille × côté) reçoit un poids `1 + 4 × taux d'échec récent + bonus d'oubli` ; les configurations ratées ou pas vues depuis longtemps reviennent plus souvent.
 - **Difficulté adaptative** (niveaux 1 à 5, par mode) : passage au niveau supérieur au-delà de 80 % de réussite sur les 10 derniers essais du niveau (balles plus rapides, angles plus fermés) ; retour en arrière sous 40 %.
 - **Statistiques** par famille (essais, taux de réussite, erreur moyenne), courbe d'évolution quotidienne en canvas, **série de jours consécutifs**.
+- **Match infini** : réussite (balles renvoyées), qualité moyenne et erreur de placement par famille ; précision de décision globale et par type choisi (« tu choisis après vitre alors qu'une demi-volée était meilleure X % du temps ») ; meilleure série ; balles par session. Les jours de match comptent dans la série de jours.
 - Chaque essai enregistre la **vue utilisée** (`view` : `2d` ou `3d` ; les essais plus anciens comptent comme 2D) ; l'onglet Stats compare réussite et erreur moyenne par mode entre 2D et 3D. Les essais du mode Temps réel enregistrent aussi l'écart de timing (`timingError`, en secondes).
 - Tout est stocké dans le `localStorage` du navigateur ; **export / import JSON** depuis l'onglet Stats.
 
@@ -114,7 +175,7 @@ Tests (Node ≥ 18, sans librairie) :
 node test.js
 ```
 
-Ils vérifient notamment que la balle ne traverse jamais le sol ni les parois, que la même graine donne la même trajectoire, que la réflexion respecte l'angle d'incidence (aux pertes près : `tan(sortie) = 0,95 / 0,8 × tan(incidence)`) et que chaque famille produit la séquence de contacts attendue à tous les niveaux. Pour la 3D (`geometry.js`) : aller-retour monde ↔ scène, rayon vers le sol qui se reprojette sur le pixel touché, champ de vision, lissage du regard, déplacement borné à la moitié de défense, joystick et clavier, remontée de la balle côté adverse et jugement du mode Temps réel. `view3d.js` (rendu Three.js) n'est pas couvert par les tests Node.
+Ils vérifient notamment que la balle ne traverse jamais le sol ni les parois, que la même graine donne la même trajectoire, que la réflexion respecte l'angle d'incidence (aux pertes près : `tan(sortie) = 0,95 / 0,8 × tan(incidence)`) et que chaque famille produit la séquence de contacts attendue à tous les niveaux. Pour la 3D (`geometry.js`) : aller-retour monde ↔ scène, rayon vers le sol qui se reprojette sur le pixel touché, champ de vision, lissage du regard, déplacement borné à la moitié de défense, joystick et clavier, remontée de la balle côté adverse et jugement du mode Temps réel. Pour le mode Match : toute balle générée est atteignable, même graine = même suite de balles, séquence de contacts par famille, `classifyShot` sur des états de référence, appui hors zone jamais renvoyé, renvoi dans le camp adverse, qualité monotone, meilleur choix sur des cas connus, statistiques. `view3d.js` et `app.js` (interface) ne sont pas couverts par les tests Node.
 
 ## Fichiers
 
@@ -124,6 +185,10 @@ Ils vérifient notamment que la balle ne traverse jamais le sol ni les parois, q
 | `style.css` | Styles mobile-first, thème clair/sombre |
 | `app.js` | Interface : canvas 2D, sélecteur Vue 2D / Vue 3D, interactions, animation, écrans |
 | `view3d.js` | Vue 3D (module ES, Three.js) : scène, caméra, contrôles, replay |
+| `config.js` | Match : toutes les constantes ajustables |
+| `quality.js` | Match : classification des coups, qualité, meilleur choix, feedback et règle à retenir |
+| `shotgen.js` | Match : génération des balles adverses (rejet déterministe, familles, atteignabilité) |
+| `rally.js` | Match : machine d'états de l'échange (déplacement, frappe, renvoi, pertes) |
 | `geometry.js` | Géométrie 3D pure (sans DOM ni Three.js) : conversions écran/monde, rayon vers le sol, regard, déplacement |
 | `physics.js` | Physique pure (sans DOM) |
 | `scenarios.js` | Génération des scénarios, évaluation, explications |
