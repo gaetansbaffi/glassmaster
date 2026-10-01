@@ -265,9 +265,21 @@ function create(opts) {
     trail.push(m);
   }
 
+  // Adversaire stylisé, placé là où la balle a été frappée (avant le filet)
+  const opponent = figure(0xd9534f);
+  scene.add(opponent);
+
   // Repère de réponse (mode lecture) : anneau au sol + mât pour le voir de loin
   const answerMarker = markerGroup(0xff9f1c);
   scene.add(answerMarker);
+  // Ligne de profondeur (question « où passera la balle à d m de la vitre ? »)
+  const depthLine = new THREE.Mesh(
+    new THREE.PlaneGeometry(COURT_W, 0.08),
+    new THREE.MeshBasicMaterial({ color: 0xff9f1c, transparent: true, opacity: 0.9, depthWrite: false })
+  );
+  depthLine.rotation.x = -Math.PI / 2;
+  depthLine.visible = false;
+  scene.add(depthLine);
 
   const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 90);
   const size = { w: 1, h: 1 };
@@ -430,6 +442,9 @@ function create(opts) {
   }
 
   function updateMarkers(app) {
+    const q = app.mode === 'lecture' && app.question;
+    depthLine.visible = !!q && q.type === 'depth';
+    if (depthLine.visible) depthLine.position.copy(sceneVec({ x: COURT_W / 2, y: q.depth, z: 0.008 }));
     answerMarker.visible = app.mode === 'lecture' && !!app.answer;
     if (answerMarker.visible) answerMarker.position.copy(sceneVec({ x: app.answer.x, y: app.answer.y, z: 0 }));
   }
@@ -480,14 +495,33 @@ function create(opts) {
       keys.clear();
       renderer.setAnimationLoop(null);
     },
-    /** Nouveau scénario : le regard se recale immédiatement. */
+    /** Nouveau scénario : le regard se recale immédiatement, l'adversaire se place sur la frappe. */
     newScenario() {
       look.ready = false;
+      const app = getApp();
+      const tau = G.preNetDuration(app.sc.init, app.sc.sim.params.g);
+      const hit = G.ballistic(app.sc.init, -tau, app.sc.sim.params.g);
+      // Le joueur frappe à côté de la balle (bras tendu, côté coup droit)
+      opponent.position.copy(sceneVec({ x: G.clamp(hit.x - 0.55, 0.4, COURT_W - 0.4), y: Math.min(hit.y + 0.3, COURT_L - 0.4), z: 0 }));
+      opponent.rotation.y = Math.PI; // face au filet, donc vers la défense
     },
   };
 }
 
 const PLAYER_SPEED = 4.5; // m/s, déplacement de défense réaliste
+
+/** Silhouette low-poly : corps, tête. */
+function figure(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color, flatShading: true });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 1.3, 7), mat);
+  body.position.y = 0.65;
+  g.add(body);
+  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 0), new THREE.MeshLambertMaterial({ color: 0xf0c8a0, flatShading: true }));
+  head.position.y = 1.5;
+  g.add(head);
+  return g;
+}
 
 /** Anneau au sol + mât vertical, pour repérer un point de loin. */
 function markerGroup(color) {

@@ -459,5 +459,25 @@ test('stats par famille et export / import JSON', () => {
   assert(threw, 'un JSON invalide doit être refusé');
 });
 
+test('stats : champ « vue utilisée » et comparaison 2D / 3D', () => {
+  const attempts = [
+    { mode: 'lecture', family: 'A', success: true, error: 0.2, ts: 1 }, // ancien essai sans vue → 2D
+    { mode: 'lecture', family: 'A', success: false, error: 1.0, ts: 2, view: '2d' },
+    { mode: 'lecture', family: 'B', success: true, error: 0.4, ts: 3, view: '3d' },
+    { mode: 'realtime', family: 'C', success: false, error: 0.9, ts: 4, view: '3d', timingError: 0.3 },
+  ];
+  const vs = Stats.viewStats(attempts);
+  near(vs.lecture['2d'].n, 2, 0);
+  near(vs.lecture['2d'].rate, 0.5, 1e-12);
+  near(vs.lecture['2d'].meanError, 0.6, 1e-12);
+  near(vs.lecture['3d'].rate, 1, 1e-12);
+  near(vs.realtime['3d'].n, 1, 0);
+  assert(vs.placement['3d'].rate === null, 'pas d’essai → null');
+  // Un export contenant le mode temps réel se réimporte, et un ancien export reçoit le niveau temps réel
+  const st = Stats.validateState({ attempts, levels: { lecture: 3 } });
+  near(st.levels.realtime, 1, 0);
+  near(st.levels.lecture, 3, 0);
+});
+
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 if (failed) process.exit(1);

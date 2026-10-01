@@ -35,16 +35,17 @@
 
     <div class="stage">
       <canvas id="court" aria-label="Vue de dessus du demi-court de défense"></canvas>
-      <div id="view3d" class="view3d" hidden aria-label="Vue 3D première personne"></div>
+      <div id="view3d" class="view3d" hidden aria-label="Vue 3D première personne">
+        <div class="opts3d" id="opts3d">
+          <label class="pill"><input type="checkbox" id="freeLookToggle"><span>Regard libre</span></label>
+          <label class="pill"><input type="checkbox" id="trailToggle"><span>Traînée</span></label>
+        </div>
+      </div>
       <div class="gauge-wrap">
         <canvas id="gauge" aria-label="Jauge de hauteur de balle (profil latéral)"></canvas>
       </div>
     </div>
 
-    <div class="opts3d" id="opts3d" hidden>
-      <label class="toggle"><input type="checkbox" id="freeLookToggle"><span>Regard libre (glisser)</span></label>
-      <label class="toggle"><input type="checkbox" id="trailToggle"><span>Traînée</span></label>
-    </div>
     <p class="notice" id="notice" hidden role="status"></p>
     <span class="family-tag" id="familyTag" hidden></span>
     <p class="prompt" id="prompt" aria-live="polite">Chargement…</p>
@@ -78,6 +79,11 @@
       <table class="stats-table" id="familyTable"></table>
     </section>
     <section class="card">
+      <h2>Vue 2D ou 3D</h2>
+      <p class="muted small">Réussite · erreur moyenne selon la vue utilisée pour chaque essai.</p>
+      <table class="stats-table" id="viewTable"></table>
+    </section>
+    <section class="card">
       <h2>Réussite par jour</h2>
       <p class="muted small">Taux de réussite quotidien par famille (14 derniers jours d'entraînement).</p>
       <div class="legend" id="chartLegend"></div>
@@ -103,6 +109,7 @@
     <button class="tab active" data-mode="lecture"><span class="ico">◎</span>Lecture</button>
     <button class="tab" data-mode="placement"><span class="ico">⇲</span>Placement</button>
     <button class="tab" data-mode="decision"><span class="ico">⑂</span>Décision</button>
+    <button class="tab" data-mode="realtime" title="Vue 3D uniquement"><span class="ico">⏱</span>Temps réel</button>
     <button class="tab" data-mode="stats"><span class="ico">▤</span>Stats</button>
   </nav>
 
