@@ -185,7 +185,9 @@ button { font: inherit; color: inherit; }
 .choice { display: inline-flex; background: #2a3846; border-radius: 12px; padding: 3px; gap: 2px; }
 .choice button { min-width: 56px; min-height: 42px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font-weight: 700; cursor: pointer; }
 .choice button[aria-pressed="true"] { background: #fff; color: #0b1219; }
-.setting input[type="range"] { width: 150px; min-height: 40px; accent-color: var(--accent); }
+.range { display: inline-flex; align-items: center; gap: 8px; }
+.setting input[type="range"] { width: 140px; min-height: 40px; accent-color: var(--accent); }
+.range output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
 
 .stats-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .stats-table th, .stats-table td { padding: 8px 4px; border-bottom: 1px solid rgba(255,255,255,0.1); text-align: left; }

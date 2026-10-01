@@ -148,10 +148,20 @@ export function createHud() {
         }
         row.append(box);
       } else if (def.type === 'range') {
+        const wrap = document.createElement('span');
+        wrap.className = 'range';
         const r = document.createElement('input');
         Object.assign(r, { type: 'range', id, min: def.min, max: def.max, step: def.step, value: settings[def.key] });
-        r.addEventListener('input', () => onChange(def.key, Number(r.value)));
-        row.append(r);
+        const out = document.createElement('output');
+        out.htmlFor = id;
+        const show = () => (out.textContent = String(r.value).replace('.', ',') + (def.unit || ''));
+        show();
+        r.addEventListener('input', () => {
+          show();
+          onChange(def.key, Number(r.value));
+        });
+        wrap.append(r, out);
+        row.append(wrap);
       }
       list.append(row);
     }

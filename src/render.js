@@ -28,6 +28,9 @@ const COLORS = {
   player: 0xffffff,
   best: 0x2ee88a,
   mine: 0xff9f1c,
+  racket: 0x111820,
+  racketFace: 0xff5a36,
+  skin: 0xf0c8a0,
 };
 
 /** Nouveau vecteur scène depuis un point monde (construction uniquement, jamais dans la boucle). */
@@ -281,7 +284,68 @@ export function createRenderer(canvas, opts) {
   scene.add(opponent);
   const playerFig = figure(COLORS.player, disposables);
   playerFig.visible = false;
+  playerFig.traverse((o) => {
+    if (o.material) {
+      o.material.transparent = true; // en vue épaule, le corps ne masque pas la balle
+      o.material.opacity = 0.6;
+    }
+  });
   scene.add(playerFig);
+
+  // Bras + raquette, attachés au corps du joueur : la tête de raquette matérialise la portée
+  const UP = new THREE.Vector3(0, 1, 0);
+  const armGeo = new THREE.CylinderGeometry(0.045, 0.04, 1, 6);
+  armGeo.translate(0, 0.5, 0); // origine à l'épaule, longueur 1 le long de +y
+  const handleGeo = new THREE.CylinderGeometry(0.02, 0.022, 0.2, 6);
+  handleGeo.translate(0, 0.1, 0);
+  const headGeo = new THREE.CylinderGeometry(0.135, 0.135, 0.035, 16);
+  headGeo.rotateX(Math.PI / 2); // disque dans le plan du manche
+  headGeo.scale(1, 1.12, 1); // tête légèrement ovale
+  headGeo.translate(0, 0.33, 0);
+  const rimGeo = new THREE.TorusGeometry(0.135, 0.012, 6, 20);
+  rimGeo.scale(1, 1.12, 1);
+  rimGeo.translate(0, 0.33, 0);
+  const armMat = new THREE.MeshLambertMaterial({ color: COLORS.skin, flatShading: true });
+  const racketMat = new THREE.MeshLambertMaterial({ color: COLORS.racket, flatShading: true });
+  const faceMat = new THREE.MeshLambertMaterial({ color: COLORS.racketFace, flatShading: true, transparent: true, opacity: 0.75 });
+  disposables.push(armGeo, handleGeo, headGeo, rimGeo, armMat, racketMat, faceMat);
+  const arm = new THREE.Mesh(armGeo, armMat);
+  const racket = new THREE.Group();
+  racket.add(new THREE.Mesh(handleGeo, racketMat), new THREE.Mesh(headGeo, faceMat), new THREE.Mesh(rimGeo, racketMat));
+  arm.visible = racket.visible = false;
+  scene.add(arm, racket);
+  const tA = new THREE.Vector3();
+  const tB = new THREE.Vector3();
+  const tDir = new THREE.Vector3();
+
+  /** Oriente `obj` (axe +y local) de a vers b ; échelle en y = longueur si `stretch`. */
+  function aim(obj, a, b, stretch) {
+    G.worldToSceneInto(tA, a.x, a.y, a.z);
+    G.worldToSceneInto(tB, b.x, b.y, b.z);
+    tDir.subVectors(tB, tA);
+    const len = tDir.length();
+    obj.position.copy(tA);
+    obj.quaternion.setFromUnitVectors(UP, tDir.multiplyScalar(1 / Math.max(len, 1e-6)));
+    if (stretch) obj.scale.set(1, len, 1);
+  }
+
+  // Trait vertical balle → sol : relie la balle à son ombre pour lire hauteur et profondeur
+  const stemGeo = new THREE.CylinderGeometry(0.008, 0.008, 1, 5);
+  stemGeo.translate(0, 0.5, 0);
+  const stemMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false });
+  disposables.push(stemGeo, stemMat);
+  const stem = new THREE.Mesh(stemGeo, stemMat);
+  stem.visible = false;
+  scene.add(stem);
+
+  // Anneau de portée aux pieds du joueur (0,3 à 1,1 m) : la balle est jouable quand son ombre y entre
+  const footGeo = new THREE.RingGeometry(0.3, 1.1, 48);
+  const footMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
+  disposables.push(footGeo, footMat);
+  const footRing = new THREE.Mesh(footGeo, footMat);
+  footRing.rotation.x = -Math.PI / 2;
+  footRing.visible = false;
+  scene.add(footRing);
 
   // Repères : meilleur point (vert), ta frappe (orange), anneaux au sol — créés une fois, déplacés ensuite
   const dotGeo = new THREE.SphereGeometry(0.09, 12, 8);
@@ -359,7 +423,8 @@ export function createRenderer(canvas, opts) {
    *   cam: { px, py, pz, tx, ty, tz, topDown: bool }, fov,
    *   path: 'off' | 'full' | 'upTo', pathT,
    *   best: { bx, by, bz, px, py } | null, mine: { bx, by, bz } | null, reach: { x, y } | null,
-   *   showPlayer: bool
+   *   showPlayer: bool, racket: { shoulder, hand, head } | null, heightLine: bool, footRing: { x, y } | null,
+   *   viewShift / viewShiftY : décalage de l'image en fraction de largeur / hauteur (panneau Détail)
    * }
    */
   function update(v) {
@@ -386,6 +451,18 @@ export function createRenderer(canvas, opts) {
     if (v.reach) G.worldToSceneInto(reachRing.position, v.reach.x, v.reach.y, 0.01);
     playerFig.visible = !!v.showPlayer;
     if (v.showPlayer) G.worldToSceneInto(playerFig.position, v.player.x, v.player.y, 0);
+    arm.visible = racket.visible = !!v.racket;
+    if (v.racket) {
+      aim(arm, v.racket.shoulder, v.racket.hand, true);
+      aim(racket, v.racket.hand, v.racket.head, false);
+    }
+    stem.visible = !!(v.heightLine && v.ball && v.ball.z > 0.05);
+    if (stem.visible) {
+      G.worldToSceneInto(stem.position, v.ball.x, v.ball.y, 0);
+      stem.scale.set(1, v.ball.z, 1);
+    }
+    footRing.visible = !!v.footRing;
+    if (v.footRing) G.worldToSceneInto(footRing.position, v.footRing.x, v.footRing.y, 0.008);
 
     const c = v.cam;
     camera.fov = v.fov;

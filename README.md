@@ -27,9 +27,18 @@ La session est infinie, sans game over. Les familles de balles où tu échoues l
 | Pause | bouton en haut à droite | Échap |
 | Plein écran | bouton sur l'accueil et dans la pause | F |
 
-Le déplacement est relatif au regard : la caméra suit la balle en douceur. Joystick et Frappe s'utilisent en même temps. En **mode gaucher**, le joystick passe à droite et Frappe à gauche. Il n'y a pas de capture de la souris.
+Le déplacement est relatif au regard. Joystick et Frappe s'utilisent en même temps. En **mode gaucher**, le joystick passe à droite et Frappe à gauche. Il n'y a pas de capture de la souris.
 
-**Réglages** : vitesse du jeu (50 / 75 / 100 %), frappe automatique (débutant), afficher la trajectoire, afficher le meilleur point de frappe, replay automatique après une erreur (désactivé par défaut), sensibilité du joystick, mode gaucher, son, vibration, réduire les mouvements de caméra (activé par défaut si le système demande moins d'animations), qualité graphique (auto / basse / normale), export / import JSON, réinitialisation.
+### Se situer par rapport à la balle
+
+- **Caméra calme** : elle ne tourne que si la balle sort d'une fenêtre centrale, et reste légèrement plongeante. Le court reste stable à l'écran tant que la balle est loin ; quand elle approche, la caméra la suit plus vite pour la garder à l'écran au moment de frapper.
+- **Champ de vision** : 90° en horizontal par défaut (réglable de 70 à 110°), au moins 55° en vertical pour voir le sol proche.
+- **Raquette et bras**, attachés à ton corps : la tête de raquette est à distance de bras, du côté de la balle (coup droit ou revers). Si la balle arrive sur la raquette, elle est dans ta portée. La raquette fait le geste à chaque frappe.
+- **Trait de hauteur** : un trait relie la balle à son ombre au sol, pour lire sa hauteur et sa profondeur.
+- **Portée au sol** : un anneau autour de tes pieds (0,3 à 1,1 m) ; la balle est jouable quand son ombre y entre.
+- **Vue « Épaule »** (Réglages → Vue) : caméra au-dessus et en arrière de ton joueur, qui est alors visible avec sa raquette et sa portée. C'est souvent plus facile pour juger son placement ; la vue 1re personne reste la vue par défaut.
+
+**Réglages** : vitesse du jeu (50 / 75 / 100 %), vue (1re personne / épaule), champ de vision, trait de hauteur sous la balle, frappe automatique (débutant), afficher la trajectoire, afficher le meilleur point de frappe, replay automatique après une erreur (désactivé par défaut), sensibilité du joystick, mode gaucher, son, vibration, réduire les mouvements de caméra (activé par défaut si le système demande moins d'animations), qualité graphique (auto / basse / normale), export / import JSON, réinitialisation.
 
 ## Installer comme une application (PWA)
 
@@ -127,5 +136,6 @@ tools/make-icons.js      génère les icônes PWA
 - **Pas de geste** : direction et puissance du renvoi dépendent uniquement de la qualité. L'adversaire ne joue pas vraiment la balle suivante, et toutes ses balles partent du fond adverse vers le filet (pas de lob ni de smash).
 - La qualité et le « meilleur choix » sont des **heuristiques pédagogiques**, réglables dans `config.js` mais non calibrées avec des entraîneurs.
 - Le joueur est un point qui accélère instantanément ; la balle est affichée environ deux fois plus grosse que la réalité pour rester lisible.
+- La raquette affichée est un **repère de portée**, pas une raquette physique : la frappe est jugée sur la position du joueur et le moment d'appui, pas sur le contact avec la raquette dessinée.
 - La boucle de jeu crée quelques petits objets par image (états immuables de `src/core`) ; le rendu lui-même n'alloue rien.
 - **Non vérifié sur un vrai téléphone** au moment de l'écriture : fluidité, ressenti du joystick, plein écran et verrouillage paysage (impossibles dans Safari sur iOS), Wake Lock, vibration (absente sur iOS) et son.

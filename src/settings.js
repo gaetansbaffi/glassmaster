@@ -12,6 +12,9 @@ const prefersReducedMotion = (() => {
 
 export const DEFAULT_SETTINGS = {
   speed: 1, // vitesse du jeu : 0,5 / 0,75 / 1
+  camera: 'fp', // vue : 'fp' (1re personne) ou 'shoulder' (épaule, 3e personne proche)
+  fov: 90, // champ de vision horizontal (°)
+  heightLine: true, // trait vertical entre la balle et son ombre
   auto: false, // frappe automatique (débutant)
   showPath: false, // afficher la trajectoire (aide)
   showBest: true, // afficher le meilleur point de frappe après chaque balle
@@ -27,11 +30,14 @@ export const DEFAULT_SETTINGS = {
 /** Contrôles affichés dans l'écran Réglages, dans l'ordre. */
 export const SETTINGS_UI = [
   { key: 'speed', label: 'Vitesse du jeu', type: 'choice', options: [[0.5, '50 %'], [0.75, '75 %'], [1, '100 %']] },
+  { key: 'camera', label: 'Vue', hint: 'Épaule : tu vois ton joueur, ta raquette et ta portée au sol.', type: 'choice', options: [['fp', '1re personne'], ['shoulder', 'Épaule']] },
+  { key: 'fov', label: 'Champ de vision', type: 'range', min: 70, max: 110, step: 5, unit: '°' },
+  { key: 'heightLine', label: 'Trait de hauteur sous la balle', hint: 'Relie la balle à son ombre pour juger hauteur et profondeur.', type: 'toggle' },
   { key: 'auto', label: 'Frappe automatique', hint: 'Pour débuter : la frappe part toute seule.', type: 'toggle' },
   { key: 'showPath', label: 'Afficher la trajectoire', hint: 'Aide : la trajectoire complète est visible.', type: 'toggle' },
   { key: 'showBest', label: 'Afficher le meilleur point de frappe', type: 'toggle' },
   { key: 'autoReplay', label: 'Replay automatique après une erreur', type: 'toggle' },
-  { key: 'sensitivity', label: 'Sensibilité du joystick', type: 'range', min: 0.6, max: 1.6, step: 0.1 },
+  { key: 'sensitivity', label: 'Sensibilité du joystick', type: 'range', min: 0.6, max: 1.6, step: 0.1, unit: '×' },
   { key: 'lefty', label: 'Mode gaucher', hint: 'Joystick à droite, Frappe à gauche.', type: 'toggle' },
   { key: 'sound', label: 'Son', type: 'toggle' },
   { key: 'vibration', label: 'Vibration', type: 'toggle' },

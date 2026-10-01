@@ -106,6 +106,90 @@ function eyePosition(player, yaw, eyeHeight, back) {
   };
 }
 
+/**
+ * Cible de caméra « calme » : le regard ne tourne que si la balle sort d'une fenêtre centrale
+ * (zone morte en lacet), et ne suit la hauteur de la balle que partiellement autour d'un
+ * tangage de base légèrement plongeant. Le court reste ainsi stable à l'écran.
+ * look = regard courant, want = angles vers la balle ;
+ * opts = { deadYaw (rad), basePitch (rad), pitchFollow (0–1) }. Retourne { yaw, pitch } visé.
+ */
+function cameraTarget(look, want, opts) {
+  const d = wrapAngle(want.yaw - look.yaw);
+  let yaw = look.yaw;
+  if (d > opts.deadYaw) yaw = want.yaw - opts.deadYaw;
+  else if (d < -opts.deadYaw) yaw = want.yaw + opts.deadYaw;
+  const pitch = opts.basePitch + (want.pitch - opts.basePitch) * opts.pitchFollow;
+  return { yaw: wrapAngle(yaw), pitch };
+}
+
+/**
+ * Position et visée de la caméra pour un regard donné.
+ *   mode 'fp'       : yeux du joueur (1,7 m), juste derrière lui ;
+ *   mode 'shoulder' : au-dessus et en arrière de l'épaule (vue « épaule »), pour voir son corps,
+ *                     sa raquette et sa portée au sol. Toujours à l'intérieur du court.
+ * Retourne { px, py, pz, tx, ty, tz } (repère monde).
+ */
+function cameraRig(player, look, mode) {
+  const fx = Math.sin(look.yaw);
+  const fy = Math.cos(look.yaw);
+  let px;
+  let py;
+  let pz;
+  if (mode === 'shoulder') {
+    const back = 2.3;
+    const side = -0.45; // légèrement à gauche : la raquette (côté droit) reste dégagée
+    px = player.x - fx * back + fy * side;
+    py = player.y - fy * back - fx * side;
+    pz = 2.35;
+  } else {
+    const e = eyePosition(player, look.yaw);
+    px = e.x;
+    py = e.y;
+    pz = e.z;
+  }
+  px = clamp(px, 0.2, COURT_W - 0.2);
+  py = clamp(py, 0.2, 2 * NET_Y - 0.2);
+  const dir = dirFromAngles(look.yaw, look.pitch);
+  return { px, py, pz, tx: px + dir.x, ty: py + dir.y, tz: pz + dir.z };
+}
+
+/**
+ * Côté de frappe (1 = droite / coup droit d'un droitier, −1 = gauche) selon la position de la balle
+ * par rapport au regard du joueur, avec hystérésis pour éviter les changements incessants.
+ */
+function pickSide(prevSide, player, yaw, ball, hysteresis) {
+  const lateral = (ball.x - player.x) * Math.cos(yaw) - (ball.y - player.y) * Math.sin(yaw);
+  const h = hysteresis == null ? 0.25 : hysteresis;
+  if (lateral > h) return 1;
+  if (lateral < -h) return -1;
+  return prevSide;
+}
+
+/**
+ * Pose de la raquette, attachée au corps du joueur (et non à l'écran) : la tête de raquette est
+ * à distance de bras sur le côté, un peu devant, à hauteur de hanche — la balle qui passe dessus
+ * est « dans la portée ». swing ∈ [0, 1] : avancement du geste de frappe (balayage vers l'avant).
+ * Retourne { shoulder, hand, head } (points monde) et la longueur de bras utilisée.
+ */
+function racketPose(player, yaw, side, swing, reach) {
+  reach = reach == null ? 0.65 : reach;
+  const fx = Math.sin(yaw);
+  const fy = Math.cos(yaw);
+  const rx = fy * side;
+  const ry = -fx * side;
+  // Pendant la frappe, la tête balaie de l'arrière vers l'avant du joueur
+  const sweep = swing > 0 ? Math.sin(Math.PI * swing) : 0;
+  const ahead = swing > 0 ? -0.25 + Math.min(1, swing) : 0.2; // armé derrière, puis accompagné devant
+  const lat = reach - 0.15 * sweep;
+  const at = (lateral, forward, z) => ({ x: player.x + rx * lateral + fx * forward, y: player.y + ry * lateral + fy * forward, z });
+  return {
+    shoulder: at(0.2, 0, 1.42),
+    hand: at(lat * 0.55, ahead * 0.6, 1.08),
+    head: at(lat, ahead, 1.0),
+    reach,
+  };
+}
+
 /* ---------- Contrôles ---------- */
 
 /**
@@ -203,6 +287,10 @@ const Geometry = {
   damp,
   dampAngle,
   cameraStep,
+  cameraTarget,
+  cameraRig,
+  pickSide,
+  racketPose,
   eyePosition,
   joystickVector,
   keyboardVector,
