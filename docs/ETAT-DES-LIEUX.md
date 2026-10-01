@@ -12,9 +12,10 @@ Glass Lab est un **jeu de padel en 3D** pour entraîner la **lecture des vitres*
 
 ## 2. Objectif de la reconstruction
 
-1. **Une vraie vue première personne, « comme dans un corps humain »** [retour]. Aujourd'hui, la meilleure expérience est la **vue épaule avec le champ de vision au maximum (110°)** [retour] : elle montre son corps, sa raquette et sa portée au sol. La 1re personne doit offrir au moins la même lisibilité, sans voir son personnage de l'extérieur.
-2. **Un seul mode par défaut, parfait** : supprimer presque tous les réglages (voir §5).
-3. **Garder la logique de jeu existante**, qui fonctionne et est testée (§4) ; reconstruire le rendu, la caméra, le corps et les contrôles.
+1. **Une vraie partie de padel en double : 4 joueurs sur le terrain**, avec des déplacements et des vitesses de jeu réalistes [retour] (voir §7).
+2. **Une vraie vue première personne, « comme dans un corps humain »** [retour]. Aujourd'hui, la meilleure expérience est la **vue épaule avec le champ de vision au maximum (110°)** [retour] : elle montre son corps, sa raquette et sa portée au sol. La 1re personne doit offrir au moins la même lisibilité, sans voir son personnage de l'extérieur.
+3. **Un seul mode par défaut, parfait** : supprimer presque tous les réglages (voir §5).
+4. **Garder la logique de jeu existante** qui fonctionne et est testée (§4), en l'**étendant** au court complet et aux 4 joueurs (§7) ; reconstruire le rendu, la caméra, le corps et les contrôles.
 
 ## 3. Ce qui existe et fonctionne [fait]
 
@@ -136,7 +137,63 @@ Ce qu'il faut viser :
 
 Critère : un joueur doit juger sa position et la balle **au moins aussi bien qu'en vue épaule avec 110° de champ** aujourd'hui.
 
-## 7. Limites et dette connues [fait]
+## 7. Cible : une vraie partie de padel à 4 [reco]
+
+### Ce que le moteur actuel suppose, et qui doit changer [fait]
+- **Un seul adversaire**, sans partenaire. Le joueur est seul dans sa moitié de court.
+- **La physique ne modélise que la moitié du joueur** : vitre de fond en y = 0, parois latérales. Le **filet** n'est qu'un plan où la simulation s'arrête : la balle ne peut pas le toucher. La **vitre de fond adverse** (y = 20) n'existe pas.
+- **L'adversaire frappe toujours après le rebond** dans son camp : pas de volée, de lob, de smash ni de jeu de ses vitres.
+- **Pas de service ni de score** : les points s'enchaînent sans compter.
+- **Le joueur est un point** qui atteint 4 m/s instantanément ; l'adversaire court à 6 m/s en ligne droite.
+
+### Ce qu'il faut viser
+1. **4 joueurs** : toi, ton partenaire (IA) et deux adversaires (IA), avec des silhouettes humaines animées (course, pas chassés, préparation, frappe).
+2. **Court complet en physique** : les deux moitiés avec toutes leurs vitres, et le **filet comme obstacle** (balle dans le filet, balle qui passe en frôlant). Les vitres adverses servent aussi au jeu des adversaires.
+3. **Positionnement tactique réaliste** :
+   - chaque équipe est en **défense** (fond, près des vitres) ou en **attaque** (au filet) ; elle monte au filet après un bon lob ou une balle courte, et recule sur un lob adverse ;
+   - les partenaires restent **alignés** et couvrent chacun leur côté (droite / gauche ; le coup droit prend en général la balle au centre) ;
+   - **qui prend la balle** : celui de son côté, ou celui le mieux placé pour une balle au centre. Ton partenaire IA joue les balles de son côté, toi les tiennes.
+4. **Coups variés pour les IA** : défense après vitre, lob, chiquita (balle basse aux pieds), volée, bandeja, víbora, smash. Le choix du coup dépend de la position et de la balle reçue.
+5. **Service et score réels** :
+   - service à la cuillère, après un rebond, derrière la ligne de service, en diagonale ;
+   - comptage 15-30-40-jeu, avec avantage ou point en or ;
+   - jeux et sets affichés discrètement.
+
+   Pour garder l'esprit « session infinie », la partie ne s'arrête jamais : un nouveau set commence à la fin du précédent.
+6. **Vitesses et mouvements adaptés**, avec une accélération réaliste (on ne passe pas de 0 à la vitesse maximale instantanément), un pas d'ajustement avant la frappe (split-step) et un temps de réaction humain.
+
+### Ordres de grandeur réalistes (à calibrer)
+Ce sont des valeurs indicatives, issues de connaissances générales et non de mesures : à vérifier et ajuster en testant.
+
+| Élément | Ordre de grandeur |
+|---|---|
+| Balle en échange de fond / défense | ~40–70 km/h |
+| Volée | ~50–80 km/h |
+| Lob | ~30–50 km/h, très haut (5–8 m) |
+| Smash | ~80–120 km/h et plus |
+| Joueur : déplacement courant / sprint | ~2–4 m/s / ~5–6 m/s |
+| Joueur : accélération | quelques m/s² : environ 0,5 s pour atteindre la pleine vitesse |
+| Temps de réaction | ~0,2–0,3 s |
+| Temps entre deux frappes | ~1–2 s selon la position (plus court au filet) |
+
+### Tension avec l'objectif pédagogique — décision à prendre
+À 4 joueurs, **ton partenaire prend environ la moitié des balles**, et une partie de l'échange se joue au filet, sans vitre. Il y aura donc **moins de situations de lecture des vitres par minute** que dans l'exercice actuel. Deux options :
+- **(a) Partie réaliste** : distribution naturelle des balles. Plus immersif, moins d'entraînement ciblé.
+- **(b) Partie orientée entraînement** (recommandée par défaut) : mêmes règles, mais les adversaires visent **plus souvent ton côté** (~60–70 % des balles) et jouent plus de balles qui t'obligent à lire les vitres, avec la répétition espacée par famille de balle conservée. Les stats et le feedback ne portent que sur tes coups.
+
+### Impact sur le code existant
+- `physics.js` : étendre au court complet (vitres adverses, filet comme obstacle). La sortie actuelle reste un cas particulier.
+- `shotgen.js` : génération depuis n'importe quel joueur, vers n'importe quelle zone, avec les nouveaux types de coups des IA.
+- `rally.js` : passer d'un duel à **4 agents**, avec service, score, attribution de la balle, positionnement et transitions attaque / défense.
+- `quality.js` : conserver l'évaluation de **tes** coups ; ajouter le contexte double (ta position par rapport à ton partenaire, la couverture de ton côté).
+- Nouveaux modules purs suggérés : `players.js` (déplacement avec accélération, réaction, split-step) et `tactics.js` (positionnement, qui prend la balle, choix du coup des IA), testés comme le reste de `src/core`.
+
+### Ordre conseillé
+1. 1re personne incarnée (§6), en gardant l'échange actuel.
+2. Court complet, 4 joueurs, positionnement et attribution de la balle, IA avec quelques coups (défense, lob, volée).
+3. Service et score, coups avancés (bandeja, víbora, smash, chiquita), calibrage des vitesses.
+
+## 8. Limites et dette connues [fait]
 
 - **La frappe n'est pas un contact raquette-balle** : elle est jugée sur la position du joueur et le moment d'appui. La raquette dessinée est un indicateur.
 - **Adversaire simpliste** : il frappe toujours après le rebond ; pas de volée, de lob, de smash ni de jeu de ses vitres.
@@ -149,20 +206,22 @@ Critère : un joueur doit juger sa position et la balle **au moins aussi bien qu
 - **Jamais testé sur un vrai téléphone** ; sur iOS, pas d'API plein écran dans Safari ni de vibration.
 - Tests navigateur faits seulement en Chromium sans affichage, avec un rendu WebGL logiciel.
 
-## 8. Critères d'acceptation de la nouvelle version
+## 9. Critères d'acceptation de la nouvelle version
 
 - De l'ouverture à la première balle : **1 appui**.
 - Aucun scroll, zoom ou menu involontaire ; joystick et Frappe utilisables en même temps.
 - **1re personne incarnée** conforme au §6 ; aucun choix de vue ni de champ de vision proposé.
+- **Partie à 4 joueurs** conforme au §7 : partenaire et adversaires visibles et animés, positionnement attaque / défense, attribution de la balle, service et score, vitesses dans les ordres de grandeur du tableau.
 - **3 réglages au maximum** (§5).
-- Logique de jeu identique (§3) ; `src/core` toujours pur ; `node test/run.js` au vert, avec des tests ajoutés pour la tête, le corps et la cinématique inverse du bras (fonctions pures).
+- Logique de jeu conservée (§3) et étendue (§7) ; `src/core` toujours pur ; `node test/run.js` au vert, avec des tests ajoutés pour la tête, le corps, la cinématique inverse du bras, le déplacement des joueurs, le positionnement, l'attribution de la balle, le service et le score (fonctions pures).
 - 60 i/s visés sur un téléphone milieu de gamme ; PWA hors ligne conservée.
 
-## 9. Brief prêt à copier
+## 10. Brief prêt à copier
 
 > Dans le dépôt `gaetansbaffi/glassmaster`, branche `claude/confident-curie-9n5fu8-jeu`, lis `docs/ETAT-DES-LIEUX.md` en entier.
-> Reconstruis le jeu « Glass Lab — Match infini » en **conservant `src/core/` (physique, échange, génération des balles, qualité, stats, config) et ses tests**, et en refaisant le rendu, la caméra, le corps du joueur, les contrôles et l'interface.
-> Priorité absolue : une **vue 1re personne incarnée** (§6). Corps complet visible, tête et corps séparés, bras et raquette en cinématique inverse, déplacements par rapport au court, champ de vision large fixé par le jeu. Un joueur doit juger sa position et la balle au moins aussi bien qu'avec l'actuelle vue épaule à 110°.
+> Reconstruis le jeu « Glass Lab » en **conservant et étendant `src/core/` (physique, échange, génération des balles, qualité, stats, config) et ses tests**, et en refaisant le rendu, la caméra, le corps du joueur, les contrôles et l'interface.
+> Objectif : une **vraie partie de padel en double à 4 joueurs** (§7 : court complet en physique avec filet et vitres adverses, partenaire et adversaires IA animés, positionnement attaque / défense, attribution de la balle, service et score, vitesses réalistes), vécue en **1re personne incarnée** (§6). Choisis l'option (b) « orientée entraînement » du §7, sauf indication contraire. Suis l'ordre conseillé du §7 : livre d'abord une version jouable de chaque étape.
+> Pour la vue : une **vue 1re personne incarnée** (§6). Corps complet visible, tête et corps séparés, bras et raquette en cinématique inverse, déplacements par rapport au court, champ de vision large fixé par le jeu. Un joueur doit juger sa position et la balle au moins aussi bien qu'avec l'actuelle vue épaule à 110°.
 > Un **seul mode par défaut** : 3 réglages au maximum (son, gaucher, données). Tout le reste est fixé (§5).
-> Respecte les critères d'acceptation (§8). Mobile d'abord, PC au clavier. JavaScript vanilla + Three.js local, sans bundler.
+> Respecte les critères d'acceptation (§9). Mobile d'abord, PC au clavier. JavaScript vanilla + Three.js local, sans bundler.
 > Fais des commits par étape et ouvre une pull request. Liste dans la PR ce qui doit être testé à la main sur un vrai téléphone.
