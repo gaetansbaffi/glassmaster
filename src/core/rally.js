@@ -48,6 +48,8 @@ function createRally(o) {
     pending: null,
     ret: null,
     pauseLeft: 0,
+    opponent: { x: 5, y: 18 },
+    nextServe: null,
     streak: 0,
     bestStreak: 0,
     balls: 0,
@@ -59,12 +61,35 @@ function createRally(o) {
   return state;
 }
 
-/** Lance la balle adverse suivante (graine dérivée du numéro de balle). */
-function spawn(s) {
+/** Point de départ d'un nouveau point (après une faute) : l'adversaire au fond de son camp. */
+function servePoint(s, index) {
+  const sv = s.cfg.rally.serve;
+  const rng = P.mulberry32(SG.mixSeed(s.seed, index) ^ 0x1b873593);
+  return { x: sv.x[0] + (sv.x[1] - sv.x[0]) * rng(), y: sv.y[0] + (sv.y[1] - sv.y[0]) * rng(), z: sv.z };
+}
+
+/** Position de l'adversaire pour frapper une balle en `p` : à distance de bras, côté centre du court. */
+function opponentSpot(p, cfg) {
+  const side = p.x > 5 ? -1 : 1;
+  return { x: Math.max(0.4, Math.min(9.6, p.x + side * cfg.rally.oppReach)), y: Math.min(19.6, p.y + 0.15) };
+}
+
+/**
+ * Lance la balle adverse suivante (graine dérivée du numéro de balle), frappée depuis `origin` :
+ * l'endroit où l'adversaire a joué ton renvoi (échange continu) ou son point de service.
+ */
+function spawn(s, origin) {
   s.index++;
   const seed = SG.mixSeed(s.seed, s.index);
   const family = SG.pickFamily(s.weights, P.mulberry32(seed ^ 0x5f3759df));
-  const shot = SG.generateAny({ seed, family, level: s.level, player: s.player, config: s.cfg });
+  if (!origin) origin = servePoint(s, s.index);
+  let shot;
+  try {
+    shot = SG.generateAny({ seed, family, level: s.level, player: s.player, config: s.cfg, origin });
+  } catch (e) {
+    // Aucune balle atteignable depuis ce point : l'adversaire rejoue depuis le fond (cas rare)
+    shot = SG.generateAny({ seed, family, level: s.level, player: s.player, config: s.cfg });
+  }
   shot.index = s.index;
   s.shot = shot;
   s.t = shot.tStart;
@@ -73,7 +98,44 @@ function spawn(s) {
   s.ret = null;
   s.phase = 'incoming';
   s.balls++;
+  const hit = G.ballistic(shot.init, shot.tStart, shot.sim.params.g);
+  s.opponent = opponentSpot(hit, s.cfg);
   s.events.push({ type: 'newBall', index: s.index, family: shot.family });
+}
+
+/**
+ * Où et quand l'adversaire frappe ton renvoi : après le rebond dans son camp, quand la balle redescend
+ * à la hauteur de frappe (ou à son sommet s'il est plus bas), au plus `oppStepIn` m après le rebond
+ * (sur une balle courte, il avance), avant sa vitre de fond et ses parois.
+ * Retourne { t (depuis ta frappe), point { x, y, z }, after (état juste après le rebond) }.
+ */
+function opponentHit(init, T, cfg) {
+  const g = P.DEFAULT_PARAMS.g;
+  const p = P.DEFAULT_PARAMS;
+  const land = G.ballistic(init, T, g);
+  const after = { x: land.x, y: land.y, z: p.radius, vx: land.vx * p.floorTangent, vy: land.vy * p.floorTangent, vz: -land.vz * p.eFloor };
+  const h = cfg.rally.oppHitHeight;
+  const apex = after.vz / g;
+  const zApex = after.z + (after.vz * after.vz) / (2 * g);
+  // Redescente à la hauteur h (racine la plus tardive), sinon le sommet
+  let tau = zApex > h ? (after.vz + Math.sqrt(after.vz * after.vz - 2 * g * (h - after.z))) / g : apex;
+  // Il avance sur une balle courte, et frappe avant sa vitre de fond et ses parois latérales
+  if (after.vy > 0) tau = Math.min(tau, (Math.min(cfg.rally.oppMaxY, after.y + cfg.rally.oppStepIn) - after.y) / after.vy);
+  if (after.vx > 0) tau = Math.min(tau, (9.7 - after.x) / after.vx);
+  if (after.vx < 0) tau = Math.min(tau, (0.3 - after.x) / after.vx);
+  tau = Math.max(0.05, tau);
+  const b = G.ballistic(after, tau, g);
+  return { t: T + tau, point: { x: b.x, y: b.y, z: Math.max(0.3, b.z) }, after };
+}
+
+/** L'adversaire se déplace vers sa position cible à vitesse bornée. */
+function moveOpponent(s, target, dt) {
+  const o = s.opponent;
+  const dx = target.x - o.x;
+  const dy = target.y - o.y;
+  const d = Math.hypot(dx, dy);
+  const step = s.cfg.rally.oppSpeed * dt;
+  s.opponent = d <= step ? { x: target.x, y: target.y } : { x: o.x + (dx / d) * step, y: o.y + (dy / d) * step };
 }
 
 /** Renvoi automatique vers le camp adverse : plus la qualité est haute, plus il est profond. */
@@ -97,12 +159,18 @@ function computeReturn(contact, quality, rng, cfg) {
     if (netZ >= NET_HEIGHT + rc.netMargin) break;
     T += 0.08; // plus haut, plus lent, jusqu'à passer le filet
   }
-  return { init, T, landing, netZ };
+  const hit = opponentHit(init, T, cfg);
+  return { init, T, landing, netZ, hit };
 }
 
 /** Position de la balle affichée, quelle que soit la phase. */
 function ballPosition(s) {
-  if (s.phase === 'return' && s.ret) return G.ballistic(s.ret.init, Math.min(s.ret.t, s.ret.T), P.DEFAULT_PARAMS.g);
+  if (s.phase === 'return' && s.ret) {
+    const g = P.DEFAULT_PARAMS.g;
+    const t = Math.min(s.ret.t, s.ret.hit.t);
+    // Avant le rebond dans le camp adverse, puis après (jusqu'à la frappe de l'adversaire)
+    return t < s.ret.T ? G.ballistic(s.ret.init, t, g) : G.ballistic(s.ret.hit.after, t - s.ret.T, g);
+  }
   return Q.ballStateAt(s.shot, Math.min(s.t, s.shot.endT));
 }
 
@@ -222,15 +290,21 @@ function step(state, dt, input) {
   movePlayer(s, input.move, dt);
 
   if (s.phase === 'return') {
+    // Échange continu : l'adversaire court vers ta balle et la renvoie depuis l'endroit où il la frappe
     s.ret = Object.assign({}, s.ret, { t: s.ret.t + dt });
-    if (s.ret.t >= s.ret.T + cfg.game.returnPause) spawn(s);
+    moveOpponent(s, opponentSpot(s.ret.hit.point, cfg), dt);
+    if (s.ret.t >= s.ret.hit.t) spawn(s, s.ret.hit.point);
     return s;
   }
   if (s.phase === 'miss') {
+    // Point perdu : l'adversaire se replace au fond pour servir le point suivant ; ton joueur reste où il est
     s.pauseLeft -= dt;
+    if (!s.nextServe) s.nextServe = servePoint(s, s.index + 1);
+    moveOpponent(s, opponentSpot(s.nextServe, cfg), dt);
     if (s.pauseLeft <= 0) {
-      s.player = Object.assign({}, cfg.player.start);
-      spawn(s);
+      const origin = s.nextServe;
+      s.nextServe = null;
+      spawn(s, origin);
     }
     return s;
   }

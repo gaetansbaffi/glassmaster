@@ -131,3 +131,65 @@ test('frappe automatique : renvoi au premier passage dans la zone, sans bouton',
   assert(hits.length >= 5, 'frappes auto : ' + hits.length);
   for (const h of hits) assert(Q.inZone(h.result.ball, h.result.player, CFG));
 });
+
+test('échange continu : la balle suivante part exactement de l’endroit où l’adversaire frappe ton renvoi', () => {
+  let st = R.createRally({ seed: 2024 });
+  let checked = 0;
+  for (let i = 0; i < 60 * 90 && checked < 15; i++) {
+    const before = st;
+    st = R.step(st, 1 / 60, botInput(st, 1 / 60));
+    if (before.phase === 'return' && st.phase === 'incoming') {
+      const origin = G.ballistic(st.shot.init, st.shot.tStart, st.shot.sim.params.g);
+      const hit = before.ret.hit.point;
+      near(Math.hypot(origin.x - hit.x, origin.y - hit.y, origin.z - hit.z), 0, 1e-9, 'origine ≠ point de frappe adverse');
+      // Pas de saut de la balle à l'écran : position avant / après le changement de balle
+      const a = R.ballPosition(before);
+      const b = R.ballPosition(st);
+      assert(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 0.35, 'la balle saute au changement : ' + Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z));
+      // L'adversaire frappe dans son camp, à une hauteur jouable, et il est arrivé près de la balle
+      assert(hit.y > 10 && hit.y <= 19.6 && hit.x > 0 && hit.x < 10 && hit.z >= 0.3, 'point de frappe adverse hors camp');
+      assert(Math.hypot(before.opponent.x - hit.x, before.opponent.y - hit.y) < 2.5, 'adversaire loin de la balle qu’il frappe');
+      checked++;
+    }
+  }
+  assert(checked >= 10, 'trop peu d’enchaînements observés : ' + checked);
+});
+
+test('renvoi court = l’adversaire attaque depuis près du filet, avec des balles plus rapides', () => {
+  const contact = { x: 5, y: 3, z: 1 };
+  const short = R.computeReturn(contact, CFG.quality.minReturn, P.mulberry32(1), CFG).hit.point;
+  const deep = R.computeReturn(contact, 1, P.mulberry32(1), CFG).hit.point;
+  assert(short.y < deep.y - 3, `court ${short.y.toFixed(1)} vs profond ${deep.y.toFixed(1)}`);
+  const speed = (origin) => {
+    let v = 0;
+    let n = 0;
+    for (let i = 0; i < 25; i++) {
+      const sh = SG.generateShot({ seed: 50 + i, family: 'A', level: 3, player: { x: 5, y: 3 }, origin });
+      if (sh) {
+        v += P.hSpeed(sh.init);
+        n++;
+      }
+    }
+    return v / n;
+  };
+  assert(speed(short) > speed(deep) * 0.9, 'attaque pas plus rapide');
+});
+
+test('après une faute : nouveau point servi du fond, le joueur n’est pas téléporté', () => {
+  let st = R.createRally({ seed: 55 });
+  const away = { x: 1, y: 1 };
+  let atMiss = null;
+  for (let i = 0; i < 60 * 8; i++) {
+    const before = st;
+    const d = Math.hypot(away.x - st.player.x, away.y - st.player.y);
+    st = R.step(st, 1 / 60, { move: d > 0.05 ? { x: (away.x - st.player.x) / d, y: (away.y - st.player.y) / d } : null });
+    if (st.phase === 'miss' && !atMiss) atMiss = Object.assign({}, st.player);
+    if (before.phase === 'miss' && st.phase === 'incoming') {
+      assert(Math.hypot(st.player.x - before.player.x, st.player.y - before.player.y) < 0.1, 'joueur téléporté');
+      const origin = G.ballistic(st.shot.init, st.shot.tStart, st.shot.sim.params.g);
+      assert(origin.y >= CFG.rally.serve.y[0] - 1e-9, 'service depuis le fond');
+      return;
+    }
+  }
+  throw new Error('pas de nouveau point observé');
+});

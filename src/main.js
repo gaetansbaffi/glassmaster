@@ -102,6 +102,7 @@ const audio = createAudio();
 /* ---------- Vue (objets réutilisés d'une image à l'autre) ---------- */
 
 const ballPos = { x: 0, y: 0, z: 0 };
+const oppPos = { x: 5, y: 18 };
 const bestMarker = { bx: 0, by: 0, bz: 0, px: 0, py: 0 };
 const mineMarker = { bx: 0, by: 0, bz: 0 };
 const reachMarker = { x: 0, y: 0 };
@@ -121,6 +122,7 @@ const view = {
   racket: null,
   heightLine: true,
   footRing: null,
+  opponent: null,
 };
 
 /** Caméra : suit la balle en douceur, amplitude et vitesse bornées (option « réduire les mouvements »). */
@@ -363,6 +365,7 @@ function replayView(dt, aspect) {
   view.showPlayer = rp.cam !== 'fp';
   view.racket = null;
   view.footRing = null;
+  view.opponent = null; // replay : l'adversaire reste à son point de frappe (placé par setShot)
   if (rp.cam === 'fp') return followCamera(dt, aspect, 'fp');
   const c = view.cam;
   if (rp.cam === 'top') {
@@ -449,10 +452,16 @@ function gameView(dt, aspect) {
     view.player.y = 2.2;
     view.racket = null;
     view.footRing = null;
+    view.opponent = null;
     return followCamera(dt, aspect, 'fp');
   }
   const alpha = game.acc / STEP;
   view.ball = interpolatedBall(alpha, ballPos);
+  const oa = game.prev.opponent;
+  const ob = game.cur.opponent;
+  oppPos.x = oa.x + (ob.x - oa.x) * alpha;
+  oppPos.y = oa.y + (ob.y - oa.y) * alpha;
+  view.opponent = oppPos;
   const pa = game.prev.player;
   const pb = game.cur.player;
   view.player.x = pa.x + (pb.x - pa.x) * alpha;
@@ -471,6 +480,9 @@ function gameView(dt, aspect) {
   view.footRing = view.player; // portée au sol : la balle est jouable quand son ombre y entre
   view.heightLine = s.heightLine;
   followCamera(dt, aspect, mode);
+  // Vue épaule contre la vitre de fond : la caméra ne peut pas reculer ; si elle est trop près,
+  // on masque le corps (la raquette reste visible) pour ne pas boucher la vue
+  if (view.showPlayer && Math.hypot(view.cam.px - view.player.x, view.cam.py - view.player.y) < 1.3) view.showPlayer = false;
   updateRacket(dt, mode);
 }
 
@@ -542,7 +554,9 @@ function frame(now) {
   last = now;
   const aspect = screenSize.w / screenSize.h;
   if (game.screen === 'playing') {
-    game.move = G.cameraRelativeMove(input.moveVector(), game.look.yaw);
+    // Par défaut, déplacements par rapport au court (haut = vers le filet), indépendants de la caméra
+    const mv = input.moveVector();
+    game.move = settings().moveFrame === 'camera' ? G.cameraRelativeMove(mv, game.look.yaw) : mv;
     if (input.consumeStrike()) {
       game.strike = true;
       game.swing = 1e-3; // lance le geste de la raquette

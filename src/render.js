@@ -423,7 +423,7 @@ export function createRenderer(canvas, opts) {
    *   cam: { px, py, pz, tx, ty, tz, topDown: bool }, fov,
    *   path: 'off' | 'full' | 'upTo', pathT,
    *   best: { bx, by, bz, px, py } | null, mine: { bx, by, bz } | null, reach: { x, y } | null,
-   *   showPlayer: bool, racket: { shoulder, hand, head } | null, heightLine: bool, footRing: { x, y } | null,
+   *   opponent: { x, y } | null, showPlayer: bool, racket: { shoulder, hand, head } | null, heightLine: bool, footRing: { x, y } | null,
    *   viewShift / viewShiftY : décalage de l'image en fraction de largeur / hauteur (panneau Détail)
    * }
    */
@@ -449,6 +449,8 @@ export function createRenderer(canvas, opts) {
     if (v.mine) G.worldToSceneInto(mineDot.position, v.mine.bx, v.mine.by, v.mine.bz);
     reachRing.visible = !!v.reach;
     if (v.reach) G.worldToSceneInto(reachRing.position, v.reach.x, v.reach.y, 0.01);
+    // Adversaire : suit l'échange (il court vers ta balle) ; sinon reste où setShot l'a placé
+    if (v.opponent) G.worldToSceneInto(opponent.position, v.opponent.x, v.opponent.y, 0);
     playerFig.visible = !!v.showPlayer;
     if (v.showPlayer) G.worldToSceneInto(playerFig.position, v.player.x, v.player.y, 0);
     arm.visible = racket.visible = !!v.racket;

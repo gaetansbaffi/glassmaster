@@ -100,9 +100,22 @@ const CONFIG = {
     down: 0.5, // en dessous, il descend
   },
 
+  rally: {
+    // Échange continu : l'adversaire court jouer ton renvoi et renvoie depuis l'endroit où il le frappe
+    oppSpeed: 6, // vitesse max de l'adversaire (m/s)
+    oppHitHeight: 1.0, // il frappe ton renvoi quand il redescend à cette hauteur après le rebond (m)
+    oppMaxY: 19.2, // … et avant la vitre de fond adverse (m, la vitre est en y = 20)
+    oppStepIn: 2.5, // il ne laisse pas la balle filer plus de 2,5 m après le rebond : renvoi court = il avance
+    oppReach: 0.6, // décalage latéral entre l'adversaire et la balle qu'il frappe (m)
+    serve: { x: [2.5, 7.5], y: [17, 18.5], z: 1.0 }, // départ d'un nouveau point après une faute
+    // Hauteur de passage au-dessus du filet, niveau 1 → niveau 5 (m) : plus basse = balle plus tendue et rapide
+    netHeight: [[2.2, 3.2], [1.1, 1.8]],
+    attackDrop: 0.35, // jusqu'à 0,35 m plus bas quand l'adversaire frappe près du filet (renvoi court = attaque)
+    minNetHeight: 0.98, // jamais sous le haut du filet + marge (m)
+    hSpeed: [5, 24], // vitesse horizontale admise des balles adverses (m/s)
+  },
   game: {
     speeds: [0.5, 0.75, 1], // vitesses de jeu proposées
-    returnPause: 0.35, // pause après le renvoi avant la balle suivante (s de jeu)
     missPause: 1.3, // pause après un échange perdu (s de jeu)
     feedbackMs: 1800, // durée d'affichage du feedback (ms, temps réel)
   },

@@ -6,7 +6,7 @@ Conçu **mobile d'abord** (plein écran, jouable avec deux pouces, paysage conse
 
 ## Concept
 
-1. L'adversaire frappe : la balle traverse le filet et vient vers toi.
+1. L'adversaire frappe : la balle traverse le filet et vient vers toi. C'est un **vrai échange** : il renvoie depuis l'endroit où il a joué ta balle précédente (il court la chercher), et attaque plus fort si ton renvoi était court.
 2. Tu te déplaces pendant qu'elle vole.
 3. Tu appuies sur **Frappe** quand tu estimes que c'est le moment. **C'est le moment choisi qui décide du coup** :
    - **volée** : avant tout rebond ;
@@ -16,7 +16,7 @@ Conçu **mobile d'abord** (plein écran, jouable avec deux pouces, paysage conse
 4. Si la balle est dans ta zone de frappe (à ±250 ms près), elle est renvoyée automatiquement : **on entraîne la décision, pas le geste**. Meilleure est la qualité, plus le renvoi est profond.
 5. Un court message indique le coup joué, sa qualité (0 à 1) et le meilleur coup possible pour cette balle. Après une erreur, **Détail** rejoue la balle au ralenti (vue 1re personne, de dessus ou de côté) avec une règle à retenir.
 
-La session est infinie, sans game over. Les familles de balles où tu échoues le plus reviennent plus souvent, et la difficulté s'adapte : balles plus rapides et angles plus fermés au-delà de 80 % de balles renvoyées, plus faciles sous 50 %.
+Après une faute, l'adversaire se replace au fond et sert le point suivant ; ton joueur reste où il est. La session est infinie, sans game over. Les familles de balles où tu échoues le plus reviennent plus souvent, et la difficulté s'adapte : balles plus rapides et angles plus fermés au-delà de 80 % de balles renvoyées, plus faciles sous 50 %.
 
 ## Commandes
 
@@ -27,7 +27,7 @@ La session est infinie, sans game over. Les familles de balles où tu échoues l
 | Pause | bouton en haut à droite | Échap |
 | Plein écran | bouton sur l'accueil et dans la pause | F |
 
-Le déplacement est relatif au regard. Joystick et Frappe s'utilisent en même temps. En **mode gaucher**, le joystick passe à droite et Frappe à gauche. Il n'y a pas de capture de la souris.
+**Déplacements par rapport au court** (par défaut) : haut = vers le filet, bas = vers ta vitre de fond, gauche / droite = le long du filet, quelle que soit la direction de la caméra. L'option **Déplacements : Regard** rend le déplacement relatif à la caméra (haut = là où tu regardes) ; comme la caméra suit la balle, la même poussée change alors de direction quand la balle part vers une vitre. Joystick et Frappe s'utilisent en même temps. En **mode gaucher**, le joystick passe à droite et Frappe à gauche. Il n'y a pas de capture de la souris.
 
 ### Se situer par rapport à la balle
 
@@ -38,7 +38,7 @@ Le déplacement est relatif au regard. Joystick et Frappe s'utilisent en même t
 - **Portée au sol** : un anneau autour de tes pieds (0,3 à 1,1 m) ; la balle est jouable quand son ombre y entre.
 - **Vue « Épaule »** (Réglages → Vue) : caméra au-dessus et en arrière de ton joueur, qui est alors visible avec sa raquette et sa portée. C'est souvent plus facile pour juger son placement ; la vue 1re personne reste la vue par défaut.
 
-**Réglages** : vitesse du jeu (50 / 75 / 100 %), vue (1re personne / épaule), champ de vision, trait de hauteur sous la balle, frappe automatique (débutant), afficher la trajectoire, afficher le meilleur point de frappe, replay automatique après une erreur (désactivé par défaut), sensibilité du joystick, mode gaucher, son, vibration, réduire les mouvements de caméra (activé par défaut si le système demande moins d'animations), qualité graphique (auto / basse / normale), export / import JSON, réinitialisation.
+**Réglages** : vitesse du jeu (50 / 75 / 100 %), vue (1re personne / épaule), déplacements (court / regard), champ de vision, trait de hauteur sous la balle, frappe automatique (débutant), afficher la trajectoire, afficher le meilleur point de frappe, replay automatique après une erreur (désactivé par défaut), sensibilité du joystick, mode gaucher, son, vibration, réduire les mouvements de caméra (activé par défaut si le système demande moins d'animations), qualité graphique (auto / basse / normale), export / import JSON, réinitialisation.
 
 ## Installer comme une application (PWA)
 
@@ -126,14 +126,19 @@ tools/make-icons.js      génère les icônes PWA
 | `returnShot.*` | retombée à 12,5 → 18,5 m | profondeur du renvoi selon la qualité, marge au-dessus du filet |
 | `shotgen.direct`, `shotgen.glass`, `shotgen.glassT` | voir fichier | plages de tirage des balles par famille (niveau 1 → 5) |
 | `difficulty` | 10 balles, 80 % / 50 % | difficulté adaptative |
-| `game.returnPause`, `game.missPause` | 0,35 s / 1,3 s | rythme : environ 1,5 à 2,5 s entre deux balles |
+| `rally.oppSpeed`, `oppHitHeight`, `oppStepIn`, `oppMaxY` | 6 m/s, 1 m, 2,5 m, 19,2 m | où et quand l'adversaire frappe ton renvoi |
+| `rally.netHeight`, `attackDrop` | 2,2–3,2 m → 1,1–1,8 m ; −0,35 m | hauteur des balles adverses au-dessus du filet (niveau 1 → 5), plus basses quand il attaque |
+| `rally.serve` | fond adverse | départ d'un nouveau point après une faute |
+| `game.missPause` | 1,3 s | pause après une faute |
 
 ## Limites
 
 - **Pas d'effet** : ni slice, ni lift, ni balle coupée qui reste collée à la vitre. C'est l'écart principal avec le jeu réel.
 - **Modèle physique simplifié** : pas de frottement de l'air, coefficients de rebond fixes (sol 0,75 ; parois 0,8, avec 95 % de la vitesse conservée le long de la vitre), contact ponctuel instantané.
 - **Parois approximées** : vitre de fond de 3 m surmontée de 1 m de grillage, vitres latérales de 3 m sur 4 m puis de 2 m sur 2 m ; le grillage est décoratif.
-- **Pas de geste** : direction et puissance du renvoi dépendent uniquement de la qualité. L'adversaire ne joue pas vraiment la balle suivante, et toutes ses balles partent du fond adverse vers le filet (pas de lob ni de smash).
+- **Pas de geste** : direction et puissance de ton renvoi dépendent uniquement de la qualité. L'adversaire frappe toujours après le rebond, sans volée, ni lob, ni smash, et ne joue pas les vitres de son camp.
+- **Balles adverses réalistes, donc rapides** : frappées du fond adverse, elles passent environ à 40–45 km/h au niveau 1 (contre ~27 km/h avant l’échange continu, quand elles « partaient » du filet). Utilise la vitesse du jeu à 50 ou 75 % pour débuter.
+- La **latérale seule croisée** n'est possible que si l'adversaire frappe assez près du filet (après un de tes renvois courts) ; frappée du fond, elle est remplacée par une autre famille.
 - La qualité et le « meilleur choix » sont des **heuristiques pédagogiques**, réglables dans `config.js` mais non calibrées avec des entraîneurs.
 - Le joueur est un point qui accélère instantanément ; la balle est affichée environ deux fois plus grosse que la réalité pour rester lisible.
 - La raquette affichée est un **repère de portée**, pas une raquette physique : la frappe est jugée sur la position du joueur et le moment d'appui, pas sur le contact avec la raquette dessinée.

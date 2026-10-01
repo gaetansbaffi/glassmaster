@@ -13,6 +13,7 @@ const prefersReducedMotion = (() => {
 export const DEFAULT_SETTINGS = {
   speed: 1, // vitesse du jeu : 0,5 / 0,75 / 1
   camera: 'fp', // vue : 'fp' (1re personne) ou 'shoulder' (épaule, 3e personne proche)
+  moveFrame: 'court', // déplacements : 'court' (haut = vers le filet) ou 'camera' (haut = là où tu regardes)
   fov: 90, // champ de vision horizontal (°)
   heightLine: true, // trait vertical entre la balle et son ombre
   auto: false, // frappe automatique (débutant)
@@ -31,6 +32,7 @@ export const DEFAULT_SETTINGS = {
 export const SETTINGS_UI = [
   { key: 'speed', label: 'Vitesse du jeu', type: 'choice', options: [[0.5, '50 %'], [0.75, '75 %'], [1, '100 %']] },
   { key: 'camera', label: 'Vue', hint: 'Épaule : tu vois ton joueur, ta raquette et ta portée au sol.', type: 'choice', options: [['fp', '1re personne'], ['shoulder', 'Épaule']] },
+  { key: 'moveFrame', label: 'Déplacements', hint: 'Court : haut = vers le filet, toujours. Regard : haut = là où tu regardes.', type: 'choice', options: [['court', 'Court'], ['camera', 'Regard']] },
   { key: 'fov', label: 'Champ de vision', type: 'range', min: 70, max: 110, step: 5, unit: '°' },
   { key: 'heightLine', label: 'Trait de hauteur sous la balle', hint: 'Relie la balle à son ombre pour juger hauteur et profondeur.', type: 'toggle' },
   { key: 'auto', label: 'Frappe automatique', hint: 'Pour débuter : la frappe part toute seule.', type: 'toggle' },
