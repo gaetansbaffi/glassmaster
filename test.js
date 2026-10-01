@@ -9,6 +9,8 @@ const Stats = require('./stats.js');
 const G = require('./geometry.js');
 const CFG = require('./config.js');
 const Q = require('./quality.js');
+const SG = require('./shotgen.js');
+const R = require('./rally.js');
 
 let passed = 0;
 let failed = 0;
@@ -489,6 +491,193 @@ test('meilleur choix : balle qui file mourir dans le coin (double vitre) → la 
   assert(r.bestType === 'volley', 'attendu volée, obtenu ' + r.bestType);
   const others = ['halfVolley', 'beforeGlass', 'afterGlass'].map((k) => (r.byType[k] ? r.byType[k].quality : 0));
   assert(r.best.quality - Math.max(...others) > 0.1, 'avance nette de la volée');
+});
+
+console.log('Match infini — génération des balles et échange');
+
+/** Joueur automatique : va au meilleur point de frappe et appuie au bon moment. */
+function botInput(st, dt) {
+  if (st.phase !== 'incoming' || st.pending) return {};
+  const best = st.shot.best.best;
+  const dx = best.pos.x - st.player.x;
+  const dy = best.pos.y - st.player.y;
+  const d = Math.hypot(dx, dy);
+  const move = d > 0.02 ? { x: dx / d, y: dy / d } : { x: 0, y: 0 };
+  return { move, strike: st.t + dt >= best.t && st.t < best.t + dt };
+}
+
+function runRally(rally, seconds, inputFn, dt) {
+  dt = dt || 1 / 60;
+  const events = [];
+  let st = rally;
+  for (let t = 0; t < seconds; t += dt) {
+    const inp = inputFn(st, dt);
+    st = R.step(st, dt, inp);
+    for (const e of st.events) events.push(Object.assign({ pressT: inp.strike ? st.t : null, playerAtPress: inp.strike ? Object.assign({}, st.player) : null }, e));
+  }
+  return { st, events };
+}
+
+test('toute balle générée est atteignable selon config.js (toutes familles, niveaux, positions)', () => {
+  const positions = [{ x: 5, y: 3 }, { x: 1, y: 1 }, { x: 9, y: 8 }, { x: 2, y: 9 }];
+  let n = 0;
+  for (const family of SG.FAMILY_IDS) {
+    for (let level = 1; level <= 5; level += 2) {
+      for (const player of positions) {
+        for (let i = 0; i < 6; i++) {
+          const shot = SG.generateShot({ seed: 500 + i * 131 + level, family, level, player });
+          assert(shot, `aucune balle ${family} niv. ${level}`);
+          // Recalcul indépendant de l'atteignabilité
+          const best = Q.bestChoice(shot, player, CFG);
+          assert(best.best && best.best.quality >= CFG.quality.playable, 'qualité atteignable insuffisante');
+          assert(best.best.margin >= 0, 'point de frappe atteint trop tard');
+          const travel = Math.hypot(best.best.pos.x - player.x, best.best.pos.y - player.y) / CFG.player.speed;
+          assert(best.best.t - shot.tStart >= CFG.player.reactionTime + travel - 1e-9, 'réaction + trajet > temps disponible');
+          n++;
+        }
+      }
+    }
+  }
+  assert(n === 5 * 3 * 4 * 6);
+});
+
+test('chaque famille est générée avec la séquence de contacts attendue et retombe chez le joueur', () => {
+  const EXP = {
+    direct: /^floor,floor$/,
+    A: /^floor,back,floor$/,
+    B: /^floor,back,(left|right),floor$/,
+    C: /^floor,(left|right),back,floor$/,
+    D: /^floor,(left|right),floor$/,
+  };
+  for (const family of SG.FAMILY_IDS) {
+    for (let i = 0; i < 25; i++) {
+      const shot = SG.generateShot({ seed: 9000 + i * 7, family, level: 1 + (i % 5), player: { x: 5, y: 3 } });
+      const seq = P.contactSequence(shot.sim).join(',');
+      assert(EXP[family].test(seq), `${family} : ${seq}`);
+      for (const c of shot.sim.contacts.filter((k) => k.type === 'floor')) assert(c.pos.y > 0 && c.pos.y < 10, 'rebond hors de la moitié du joueur');
+      assert(shot.tStart < 0, 'la balle part du camp adverse');
+    }
+  }
+});
+
+test('même graine → même séquence de balles (générateur et échange)', () => {
+  const a = SG.sequence(4242, 10);
+  const b = SG.sequence(4242, 10);
+  assert(a.map((s) => s.family + JSON.stringify(s.init)).join('|') === b.map((s) => s.family + JSON.stringify(s.init)).join('|'));
+  const c = SG.sequence(4243, 10);
+  assert(a.map((s) => JSON.stringify(s.init)).join() !== c.map((s) => JSON.stringify(s.init)).join(), 'graine différente');
+  const r1 = runRally(R.createRally({ seed: 77 }), 25, botInput);
+  const r2 = runRally(R.createRally({ seed: 77 }), 25, botInput);
+  assert(JSON.stringify(r1.events) === JSON.stringify(r2.events), 'échanges différents');
+  assert(r1.events.filter((e) => e.type === 'newBall').length >= 5, 'trop peu de balles');
+});
+
+test('l’échange est infini : un joueur parfait renvoie balle après balle, la série grandit', () => {
+  const { st, events } = runRally(R.createRally({ seed: 2024 }), 60, botInput);
+  const hits = events.filter((e) => e.type === 'hit');
+  const misses = events.filter((e) => e.type === 'miss');
+  assert(hits.length >= 15, 'trop peu de frappes : ' + hits.length);
+  assert(hits.length > 5 * misses.length, `frappes ${hits.length}, pertes ${misses.length}`);
+  assert(st.bestStreak >= 5, 'meilleure série ' + st.bestStreak);
+  for (const h of hits) assert(h.result.quality >= CFG.quality.minReturn);
+});
+
+test('appuyer sur « Frappe » hors zone ne renvoie jamais la balle', () => {
+  const rng = P.mulberry32(31);
+  let presses = 0;
+  let outOfZone = 0;
+  for (let k = 0; k < 40; k++) {
+    let st = R.createRally({ seed: 300 + k });
+    const pressAt = st.shot.tStart + rng() * (st.shot.endT - st.shot.tStart);
+    const wander = { x: rng() * 2 - 1, y: rng() * 2 - 1 };
+    for (let i = 0; i < 400 && st.phase === 'incoming'; i++) {
+      const strike = !st.pending && st.t < pressAt && st.t + 1 / 60 >= pressAt;
+      const before = st;
+      st = R.step(st, 1 / 60, { move: wander, strike });
+      if (strike) {
+        presses++;
+        const tol = CFG.strike.timingTolerance;
+        const inWindow = R.zoneTimes(before, st.t - tol, st.t + tol, st.player);
+        if (!inWindow.length) {
+          outOfZone++;
+          assert(st.phase === 'miss' && !st.events.some((e) => e.type === 'hit'), 'frappe hors zone renvoyée !');
+        }
+      }
+      for (const e of st.events) {
+        if (e.type !== 'hit') continue;
+        const r = e.result;
+        assert(Q.inZone(r.ball, r.player, CFG), 'contact hors zone de frappe');
+      }
+    }
+  }
+  assert(presses >= 30 && outOfZone >= 10, `appuis ${presses}, hors zone ${outOfZone}`);
+});
+
+test('motifs de perte : trop tôt, trop tard, trop loin, pas atteinte', () => {
+  const run = (pressAt, move) => {
+    let st = R.createRally({ seed: 55 });
+    const best = st.shot.best.best;
+    for (let i = 0; i < 600 && st.phase === 'incoming'; i++) {
+      const strike = pressAt != null && !st.pending && st.t < pressAt(best) && st.t + 1 / 120 >= pressAt(best);
+      st = R.step(st, 1 / 120, { move: move ? move(st, best) : null, strike });
+    }
+    return st;
+  };
+  const toBest = (st, best) => {
+    const d = Math.hypot(best.pos.x - st.player.x, best.pos.y - st.player.y);
+    return d > 0.02 ? { x: (best.pos.x - st.player.x) / d, y: (best.pos.y - st.player.y) / d } : null;
+  };
+  assert(run(null, toBest).last.reason === 'notReached', 'sans frappe : pas atteinte');
+  assert(run((b) => b.t - 0.6, toBest).last.reason === 'early', 'trop tôt');
+  // Trop loin : on reste dans le coin opposé
+  const away = (st, best) => ({ x: best.pos.x > 5 ? -1 : 1, y: best.pos.y > 5 ? -1 : 1 });
+  assert(run((b) => b.t, away).last.reason === 'far', 'trop loin');
+});
+
+test('trop tard : appui après le dernier passage de la balle dans la zone', () => {
+  // Balle directe : on suit la balle puis on appuie bien après sa sortie de zone
+  let st = R.createRally({ seed: 8, weights: { direct: 1, A: 0, B: 0, C: 0, D: 0 } });
+  assert(st.shot.family === 'direct');
+  const best = st.shot.best.best;
+  const times = R.zoneTimes(st, st.shot.tStart, st.shot.endT, best.pos);
+  assert(times.length > 0);
+  const lastIn = times[times.length - 1];
+  for (let i = 0; i < 600 && st.phase === 'incoming'; i++) {
+    const d = Math.hypot(best.pos.x - st.player.x, best.pos.y - st.player.y);
+    const move = d > 0.02 ? { x: (best.pos.x - st.player.x) / d, y: (best.pos.y - st.player.y) / d } : null;
+    const strike = st.t < lastIn + 0.3 && st.t + 1 / 120 >= lastIn + 0.3;
+    st = R.step(st, 1 / 120, { move, strike });
+  }
+  assert(st.last.outcome === 'miss' && ['late', 'notReached'].includes(st.last.reason), st.last.reason);
+});
+
+test('le renvoi retombe dans le camp adverse quand la qualité est suffisante, et plus profond si elle est meilleure', () => {
+  const rng = P.mulberry32(3);
+  for (let i = 0; i < 200; i++) {
+    const contact = { x: 0.5 + rng() * 9, y: 0.4 + rng() * 9, z: 0.1 + rng() * 1.8 };
+    let prevY = -Infinity;
+    for (let q = CFG.quality.minReturn; q <= 1.0001; q += 0.1) {
+      const r = R.computeReturn(contact, q, P.mulberry32(i), CFG);
+      const land = G.ballistic(r.init, r.T, P.DEFAULT_PARAMS.g);
+      near(land.z, P.DEFAULT_PARAMS.radius, 1e-9, 'retombe au sol au temps T');
+      assert(land.y > 10 && land.y < 20 && land.x > 0 && land.x < 10, 'hors du camp adverse : ' + JSON.stringify(land));
+      assert(r.netZ >= 0.88, 'dans le filet : ' + r.netZ);
+      assert(land.y > prevY, 'qualité plus haute = renvoi plus profond');
+      prevY = land.y;
+    }
+  }
+});
+
+test('frappe automatique : renvoi au premier passage dans la zone, sans bouton', () => {
+  const { events } = runRally(R.createRally({ seed: 99, auto: true }), 40, (st) => {
+    if (st.phase !== 'incoming') return {};
+    const best = st.shot.best.best;
+    const d = Math.hypot(best.pos.x - st.player.x, best.pos.y - st.player.y);
+    return { move: d > 0.02 ? { x: (best.pos.x - st.player.x) / d, y: (best.pos.y - st.player.y) / d } : null };
+  });
+  const hits = events.filter((e) => e.type === 'hit');
+  assert(hits.length >= 5, 'frappes auto : ' + hits.length);
+  for (const h of hits) assert(Q.inZone(h.result.ball, h.result.player, CFG));
 });
 
 console.log('Progression');
