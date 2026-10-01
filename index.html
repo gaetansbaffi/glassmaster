@@ -7,6 +7,10 @@
   <meta name="description" content="Glass Lab — entraînement à la lecture des rebonds sur les vitres au padel.">
   <title>Glass Lab</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Three.js (vue 3D) : version fixée, importée en module ES depuis un CDN, sans bundler -->
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -19,7 +23,10 @@
 
   <main id="trainView" class="view">
     <div class="toolbar">
-      <span class="family-tag" id="familyTag" hidden></span>
+      <div class="seg" role="group" aria-label="Type de vue">
+        <button class="seg-btn active" data-view="2d" aria-pressed="true">Vue 2D</button>
+        <button class="seg-btn" data-view="3d" aria-pressed="false">Vue 3D</button>
+      </div>
       <label class="toggle">
         <input type="checkbox" id="revealToggle">
         <span>Révéler la trajectoire</span>
@@ -28,11 +35,24 @@
 
     <div class="stage">
       <canvas id="court" aria-label="Vue de dessus du demi-court de défense"></canvas>
+      <div id="view3d" class="view3d" hidden aria-label="Vue 3D première personne">
+        <div class="opts3d" id="opts3d">
+          <label class="pill"><input type="checkbox" id="freeLookToggle"><span>Regard libre</span></label>
+          <label class="pill"><input type="checkbox" id="trailToggle"><span>Traînée</span></label>
+        </div>
+        <div class="camsel" id="camSel" role="group" aria-label="Vue du replay" hidden>
+          <button class="cam-btn active" data-cam="fp">1re pers.</button>
+          <button class="cam-btn" data-cam="top">Dessus</button>
+          <button class="cam-btn" data-cam="side">Côté</button>
+        </div>
+      </div>
       <div class="gauge-wrap">
         <canvas id="gauge" aria-label="Jauge de hauteur de balle (profil latéral)"></canvas>
       </div>
     </div>
 
+    <p class="notice" id="notice" hidden role="status"></p>
+    <span class="family-tag" id="familyTag" hidden></span>
     <p class="prompt" id="prompt" aria-live="polite">Chargement…</p>
 
     <div class="actions" id="actions">
@@ -64,6 +84,11 @@
       <table class="stats-table" id="familyTable"></table>
     </section>
     <section class="card">
+      <h2>Vue 2D ou 3D</h2>
+      <p class="muted small">Réussite · erreur moyenne selon la vue utilisée pour chaque essai.</p>
+      <table class="stats-table" id="viewTable"></table>
+    </section>
+    <section class="card">
       <h2>Réussite par jour</h2>
       <p class="muted small">Taux de réussite quotidien par famille (14 derniers jours d'entraînement).</p>
       <div class="legend" id="chartLegend"></div>
@@ -89,6 +114,7 @@
     <button class="tab active" data-mode="lecture"><span class="ico">◎</span>Lecture</button>
     <button class="tab" data-mode="placement"><span class="ico">⇲</span>Placement</button>
     <button class="tab" data-mode="decision"><span class="ico">⑂</span>Décision</button>
+    <button class="tab" data-mode="realtime" title="Vue 3D uniquement"><span class="ico">⏱</span>Temps réel</button>
     <button class="tab" data-mode="stats"><span class="ico">▤</span>Stats</button>
   </nav>
 
@@ -97,6 +123,8 @@
   <script src="physics.js"></script>
   <script src="scenarios.js"></script>
   <script src="stats.js"></script>
+  <script src="geometry.js"></script>
   <script src="app.js"></script>
+  <script type="module" src="view3d.js" onerror="document.dispatchEvent(new Event('glass3d-error'))"></script>
 </body>
 </html>

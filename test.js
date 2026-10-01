@@ -6,6 +6,7 @@
 const P = require('./physics.js');
 const S = require('./scenarios.js');
 const Stats = require('./stats.js');
+const G = require('./geometry.js');
 
 let passed = 0;
 let failed = 0;
@@ -220,6 +221,181 @@ test('évaluations : lecture, placement, décision', () => {
   assert(ex.lines.length >= 3 && ex.rule.length > 10);
 });
 
+console.log('Géométrie 3D');
+
+const CAM = { position: { x: 5, y: 2.6, z: 1.7 }, target: { x: 5.5, y: 6, z: 1 }, fovDeg: 70, aspect: 0.8 };
+
+test('monde ↔ scène : aller-retour exact et rotation directe (déterminant +1)', () => {
+  const rng = P.mulberry32(11);
+  for (let i = 0; i < 200; i++) {
+    const p = { x: rng() * 10, y: rng() * 20, z: rng() * 4 };
+    const q = G.sceneToWorld(G.worldToScene(p));
+    near(q.x, p.x, 1e-12);
+    near(q.y, p.y, 1e-12);
+    near(q.z, p.z, 1e-12);
+  }
+  const s0 = G.worldToScene({ x: 0, y: 0, z: 0 });
+  const ex = G.vec.sub(G.worldToScene({ x: 1, y: 0, z: 0 }), s0);
+  const ey = G.vec.sub(G.worldToScene({ x: 0, y: 1, z: 0 }), s0);
+  const ez = G.vec.sub(G.worldToScene({ x: 0, y: 0, z: 1 }), s0);
+  near(G.vec.dot(G.vec.cross(ex, ey), ez), 1, 1e-12, 'orientation conservée');
+  const net = G.worldToScene({ x: 5, y: 10, z: 0 });
+  assert(net.x === 0 && net.y === 0 && net.z === 0, 'filet au centre de la scène');
+});
+
+test('écran ↔ NDC : coins et centre', () => {
+  const c = G.screenToNDC(200, 150, 400, 300);
+  near(c.x, 0, 1e-12);
+  near(c.y, 0, 1e-12);
+  const tl = G.screenToNDC(0, 0, 400, 300);
+  assert(tl.x === -1 && tl.y === 1, 'coin haut gauche');
+  const back = G.ndcToScreen(0.3, -0.4, 400, 300);
+  const n = G.screenToNDC(back.x, back.y, 400, 300);
+  near(n.x, 0.3, 1e-12);
+  near(n.y, -0.4, 1e-12);
+});
+
+test('le centre de l’écran vise exactement la cible de la caméra', () => {
+  const ray = G.rayFromCamera(CAM, { x: 0, y: 0 });
+  const f = G.vec.norm(G.vec.sub(CAM.target, CAM.position));
+  near(G.vec.dot(ray.dir, f), 1, 1e-12);
+});
+
+test('rayon vers le sol : le point touché se reprojette sur le pixel touché', () => {
+  const W = 360;
+  const H = 450;
+  let hits = 0;
+  for (let py = 0; py <= H; py += 15) {
+    for (let px = 0; px <= W; px += 20) {
+      const g = G.screenToGround(CAM, px, py, W, H);
+      if (!g) continue;
+      hits++;
+      near(g.z, 0, 1e-9, 'le point est sur le sol');
+      const s = G.worldToScreen(CAM, g, W, H);
+      near(s.x, px, 1e-6, 'x écran');
+      near(s.y, py, 1e-6, 'y écran');
+    }
+  }
+  assert(hits > 100, 'trop peu de pixels touchent le sol : ' + hits);
+});
+
+test('rayon vers le sol : un point du sol projeté puis relancé retombe au même endroit', () => {
+  const rng = P.mulberry32(5);
+  for (let i = 0; i < 200; i++) {
+    const p = { x: rng() * 10, y: 3 + rng() * 15, z: 0 };
+    const s = G.worldToScreen(CAM, p, 390, 500);
+    if (!s) continue;
+    const g = G.screenToGround(CAM, s.x, s.y, 390, 500);
+    near(g.x, p.x, 1e-6);
+    near(g.y, p.y, 1e-6);
+  }
+});
+
+test('rayon vers le sol : viser au-dessus de l’horizon ne touche pas le sol, un point derrière la caméra n’est pas projeté', () => {
+  const flat = { position: { x: 5, y: 2, z: 1.7 }, target: { x: 5, y: 10, z: 1.7 }, fovDeg: 70, aspect: 1 };
+  assert(G.screenToGround(flat, 50, 0, 100, 100) === null, 'haut de l’écran = ciel');
+  assert(G.screenToGround(flat, 50, 100, 100, 100) !== null, 'bas de l’écran = sol');
+  assert(G.intersectGround({ origin: { x: 0, y: 0, z: 1 }, dir: { x: 0, y: 1, z: 0 } }) === null, 'rayon horizontal');
+  assert(G.worldToScreen(flat, { x: 5, y: 0, z: 1 }, 100, 100) === null, 'point derrière');
+});
+
+test('champ de vision : 75° horizontal en portrait, bornes respectées', () => {
+  const vf = G.verticalFov(75, 0.75);
+  const hf = (2 * Math.atan(Math.tan((vf * Math.PI) / 360) * 0.75) * 180) / Math.PI;
+  near(hf, 75, 1e-9);
+  near(G.verticalFov(75, 0.2, 45, 95), 95, 0, 'borne haute');
+  near(G.verticalFov(75, 4, 45, 95), 45, 0, 'borne basse');
+});
+
+test('angles de regard : aller-retour et lissage par le plus court chemin', () => {
+  const a = G.lookAngles({ x: 5, y: 3, z: 1.7 }, { x: 7, y: 1, z: 2.7 });
+  const d = G.dirFromAngles(a.yaw, a.pitch);
+  const exp = G.vec.norm({ x: 2, y: -2, z: 1 });
+  near(d.x, exp.x, 1e-12);
+  near(d.y, exp.y, 1e-12);
+  near(d.z, exp.z, 1e-12);
+  near(G.lookAngles({ x: 5, y: 3, z: 1 }, { x: 5, y: 9, z: 1 }).yaw, 0, 1e-12, 'vers le filet = lacet 0');
+  // De 170° à −170° : passer par 180°, pas par 0°
+  const mid = G.dampAngle((170 * Math.PI) / 180, (-170 * Math.PI) / 180, 1, 1);
+  near(Math.abs(mid), Math.PI, (6 * Math.PI) / 180);
+  near(G.damp(0, 10, 0.5, 0.5), 5, 1e-12, 'demi-vie');
+  near(G.wrapAngle(3 * Math.PI), Math.PI, 1e-12);
+  near(G.wrapAngle(-Math.PI), Math.PI, 1e-12, 'intervalle ]-π, π]');
+  near(G.wrapAngle(0.5 - 4 * Math.PI), 0.5, 1e-12);
+});
+
+test('déplacement : relatif au regard, borné à la moitié de défense', () => {
+  const p = G.moveOnCourt({ x: 5, y: 3 }, { x: 0, y: 1 }, 0, 4, 0.5);
+  near(p.x, 5, 1e-12);
+  near(p.y, 5, 1e-12, 'avancer vers le filet');
+  const r = G.moveOnCourt({ x: 5, y: 3 }, { x: 1, y: 0 }, 0, 4, 0.25);
+  near(r.x, 6, 1e-12, 'pas chassé à droite');
+  const back = G.moveOnCourt({ x: 5, y: 3 }, { x: 0, y: 1 }, Math.PI, 4, 0.25);
+  near(back.y, 2, 1e-12, 'regard vers la vitre : avancer = reculer vers le fond');
+  const far = G.moveOnCourt({ x: 5, y: 9 }, { x: 1, y: 1 }, 0, 50, 1);
+  const b = G.DEFENSE_BOUNDS;
+  assert(far.x === b.xMax && far.y === b.yMax, 'bornes filet / paroi');
+  const out = G.moveOnCourt({ x: 0.5, y: 0.5 }, { x: -1, y: -1 }, 0, 50, 1);
+  assert(out.x === b.xMin && out.y === b.yMin, 'bornes vitre de fond / paroi');
+});
+
+test('joystick et clavier : zone morte, norme ≤ 1, ZQSD (AZERTY) = WASD (QWERTY)', () => {
+  const z = G.joystickVector(3, 2, 60);
+  assert(z.x === 0 && z.y === 0, 'zone morte');
+  const full = G.joystickVector(0, -200, 60);
+  near(full.y, 1, 1e-12, 'doigt vers le haut = avancer');
+  const sat = G.joystickVector(60, 60, 60);
+  near(Math.hypot(sat.x, sat.y), 1, 1e-12, 'saturé au bord');
+  const half = G.joystickVector(0, 30, 60);
+  assert(half.y < 0 && half.y > -1, 'mi-course');
+  const k = G.keyboardVector(new Set(['KeyW', 'KeyD']));
+  near(Math.hypot(k.x, k.y), 1, 1e-12, 'diagonale normalisée');
+  assert(k.x > 0 && k.y > 0);
+  const a = G.keyboardVector(new Set(['ArrowLeft']));
+  assert(a.x === -1 && a.y === 0);
+});
+
+test('caméra à hauteur d’yeux derrière le joueur, jamais derrière la vitre', () => {
+  const e = G.eyePosition({ x: 5, y: 3 }, 0);
+  near(e.z, 1.7, 0);
+  near(e.y, 3 - 0.35, 1e-12);
+  const glass = G.eyePosition({ x: 5, y: 0.3 }, 0, 1.7, 1);
+  assert(glass.y >= 0.15, 'reste devant la vitre de fond');
+});
+
+test('balle côté adverse : la remontée dans le temps reste sur la trajectoire et au-dessus du sol', () => {
+  for (const f of S.FAMILY_IDS) {
+    for (const seed of SCENARIO_SEEDS.slice(0, 15)) {
+      const sc = S.generate({ family: f, level: 3, seed });
+      const g = P.DEFAULT_PARAMS.g;
+      const tau = G.preNetDuration(sc.init, g);
+      assert(tau > 0, 'durée positive');
+      const start = G.ballistic(sc.init, -tau, g);
+      assert(start.y > 10 && start.y <= 16.5 + 1e-9, 'départ côté adverse : y=' + start.y);
+      assert(start.z >= 0.4 - 1e-9 && start.z <= 3.2 + 1e-9, 'hauteur de frappe plausible : z=' + start.z);
+      // Revenir au filet redonne exactement l'état initial
+      const back = G.ballistic(start, tau, g);
+      near(back.x, sc.init.x, 1e-9);
+      near(back.z, sc.init.z, 1e-9);
+      near(back.vz, sc.init.vz, 1e-9);
+    }
+  }
+});
+
+test('temps réel : jugement sur la distance et le timing', () => {
+  const w = { t0: 1.0, t1: 1.1 };
+  assert(G.judgeStrike({ placementError: 0, strikeT: 1.05, window: w }).success, 'parfait');
+  const early = G.judgeStrike({ placementError: 0, strikeT: 0.7, window: w });
+  assert(!early.success && early.timing === 'early');
+  near(early.timingError, 0.3, 1e-12);
+  const late = G.judgeStrike({ placementError: 0, strikeT: 1.4, window: w });
+  assert(!late.success && late.timing === 'late');
+  assert(G.judgeStrike({ placementError: 0, strikeT: 1.2, window: w }).success, 'dans la tolérance de 0,15 s');
+  assert(!G.judgeStrike({ placementError: 0.6, strikeT: 1.05, window: w }).success, 'trop loin');
+  const none = G.judgeStrike({ placementError: 0.1, strikeT: null, window: w });
+  assert(!none.success && none.timing === 'none');
+});
+
 console.log('Progression');
 
 test('série de jours consécutifs', () => {
@@ -281,6 +457,26 @@ test('stats par famille et export / import JSON', () => {
     threw = true;
   }
   assert(threw, 'un JSON invalide doit être refusé');
+});
+
+test('stats : champ « vue utilisée » et comparaison 2D / 3D', () => {
+  const attempts = [
+    { mode: 'lecture', family: 'A', success: true, error: 0.2, ts: 1 }, // ancien essai sans vue → 2D
+    { mode: 'lecture', family: 'A', success: false, error: 1.0, ts: 2, view: '2d' },
+    { mode: 'lecture', family: 'B', success: true, error: 0.4, ts: 3, view: '3d' },
+    { mode: 'realtime', family: 'C', success: false, error: 0.9, ts: 4, view: '3d', timingError: 0.3 },
+  ];
+  const vs = Stats.viewStats(attempts);
+  near(vs.lecture['2d'].n, 2, 0);
+  near(vs.lecture['2d'].rate, 0.5, 1e-12);
+  near(vs.lecture['2d'].meanError, 0.6, 1e-12);
+  near(vs.lecture['3d'].rate, 1, 1e-12);
+  near(vs.realtime['3d'].n, 1, 0);
+  assert(vs.placement['3d'].rate === null, 'pas d’essai → null');
+  // Un export contenant le mode temps réel se réimporte, et un ancien export reçoit le niveau temps réel
+  const st = Stats.validateState({ attempts, levels: { lecture: 3 } });
+  near(st.levels.realtime, 1, 0);
+  near(st.levels.lecture, 3, 0);
 });
 
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);

@@ -6,7 +6,8 @@
   'use strict';
 
   const STORAGE_KEY = 'glasslab.v1';
-  const MODES = ['lecture', 'placement', 'decision'];
+  const MODES = ['lecture', 'placement', 'decision', 'realtime'];
+  const VIEWS = ['2d', '3d'];
   const FAMILY_IDS = ['A', 'B', 'C', 'D'];
   const SIDES = ['left', 'right'];
   const MAX_ATTEMPTS = 5000;
@@ -15,9 +16,9 @@
     return {
       version: 1,
       attempts: [],
-      levels: { lecture: 1, placement: 1, decision: 1 },
-      levelSince: { lecture: 0, placement: 0, decision: 0 },
-      settings: { reveal: false },
+      levels: { lecture: 1, placement: 1, decision: 1, realtime: 1 },
+      levelSince: { lecture: 0, placement: 0, decision: 0, realtime: 0 },
+      settings: { reveal: false, view: '2d', freeLook: false, trail: true },
     };
   }
 
@@ -109,6 +110,29 @@
         rate: list.length ? list.filter((a) => a.success).length / list.length : null,
         meanError: errs.length ? errs.reduce((s, a) => s + a.error, 0) / errs.length : null,
       };
+    }
+    return out;
+  }
+
+  /** Vue utilisée pour un essai (les essais antérieurs à la 3D sont en 2D). */
+  function viewOf(a) {
+    return a.view === '3d' ? '3d' : '2d';
+  }
+
+  /** Comparaison 2D / 3D : réussite et erreur moyenne par mode et par vue. */
+  function viewStats(attempts) {
+    const out = {};
+    for (const m of MODES) {
+      out[m] = {};
+      for (const v of VIEWS) {
+        const list = attempts.filter((a) => a.mode === m && viewOf(a) === v);
+        const errs = list.filter((a) => typeof a.error === 'number' && isFinite(a.error));
+        out[m][v] = {
+          n: list.length,
+          rate: list.length ? list.filter((a) => a.success).length / list.length : null,
+          meanError: errs.length ? errs.reduce((s, a) => s + a.error, 0) / errs.length : null,
+        };
+      }
     }
     return out;
   }
@@ -211,6 +235,7 @@
   const Stats = {
     STORAGE_KEY,
     MODES,
+    VIEWS,
     dayKey,
     streak,
     configWeights,
@@ -218,6 +243,8 @@
     nextLevel,
     familyStats,
     dailySeries,
+    viewOf,
+    viewStats,
     validateState,
     createStore,
   };

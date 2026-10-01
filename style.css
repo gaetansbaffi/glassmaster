@@ -91,7 +91,38 @@ button, label.btn { font: inherit; }
 .view { max-width: 560px; margin: 0 auto; padding: 10px 16px 16px; }
 
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 12px; padding: 3px; gap: 2px; }
+.seg-btn {
+  min-height: 40px; padding: 6px 12px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--text-2); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.seg-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.seg-btn:disabled { opacity: .45; cursor: default; }
+.view3d { position: relative; flex: 1 1 auto; min-width: 0; border-radius: var(--radius); overflow: hidden; background: #a9d2ef; touch-action: none; user-select: none; -webkit-user-select: none; }
+.view3d-canvas { display: block; }
+.opts3d { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; z-index: 2; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(15, 23, 32, 0.55); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.camsel { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 4px; padding: 4px; border-radius: 14px; background: rgba(15, 23, 32, 0.55); z-index: 2; }
+.cam-btn { min-height: 44px; min-width: 72px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: #fff; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+.cam-btn.active { background: #fff; color: #0e141b; }
+.pill input { width: 18px; height: 18px; margin: 0; accent-color: #2bb58a; }
+.joy {
+  position: absolute; left: 14px; bottom: 14px; width: 112px; height: 112px; border-radius: 50%;
+  background: rgba(15, 23, 32, 0.28); border: 2px solid rgba(255, 255, 255, 0.7);
+  display: none; align-items: center; justify-content: center; touch-action: none;
+}
+.joy.on { display: flex; }
+.joy-knob { width: 48px; height: 48px; border-radius: 50%; background: rgba(255, 255, 255, 0.9); box-shadow: 0 2px 8px rgba(0,0,0,.3); pointer-events: none; }
+.fps { position: absolute; right: 8px; top: 8px; padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; font: 600 12px system-ui, sans-serif; }
+.notice {
+  margin: 10px 2px 0; padding: 10px 12px; border-radius: 10px; font-size: 14px;
+  background: var(--surface-2); border-left: 4px solid var(--bad);
+}
 .family-tag {
+  display: inline-block; margin-top: 10px;
   font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
   background: var(--surface-2); color: var(--text-2);
 }
@@ -155,11 +186,12 @@ button, label.btn { font: inherit; }
 .small { font-size: 13px; }
 .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .kpi { background: var(--surface-2); border-radius: 10px; padding: 10px; }
-.kpi b { display: block; font-size: 24px; }
+.kpi b { display: block; font-size: 24px; white-space: nowrap; }
 .kpi span { font-size: 13px; color: var(--text-2); }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .stats-table th, .stats-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--border); }
 .stats-table th { color: var(--text-2); font-weight: 600; }
+.stats-table small { color: var(--muted); font-size: 12px; }
 .stats-table td.num, .stats-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--text-2); margin-bottom: 6px; }
@@ -173,16 +205,17 @@ button, label.btn { font: inherit; }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tab {
   min-height: 64px; border: 0; background: transparent; color: var(--muted);
-  font-size: 13px; font-weight: 600; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer;
+  font-size: 12px; font-weight: 600; white-space: nowrap; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer;
 }
 .tab .ico { font-size: 20px; line-height: 1; }
 .tab.active { color: var(--accent); }
+.tab:disabled { opacity: .4; cursor: default; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%);

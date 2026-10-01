@@ -7,6 +7,7 @@
   const P = window.GlassPhysics;
   const S = window.GlassScenarios;
   const Stats = window.GlassStats;
+  const G = window.GlassGeometry;
   const { COURT } = P;
 
   const MARGIN = 0.55; // marge autour du court, en mètres (épaisseur des parois)
@@ -36,6 +37,10 @@
     lecture: 'Touche le terrain là où la balle passera.',
     placement: 'Glisse ton joueur là où tu frapperais la balle.',
     decision: 'Que fais-tu ?',
+    realtime: 'Place-toi et appuie sur « Frappe » (ou Espace) au moment de frapper.',
+  };
+  const MODE_PROMPTS_3D = {
+    placement: 'Déplace-toi (joystick, flèches ou ZQSD) jusqu’à ta position de frappe.',
   };
 
   const store = Stats.createStore(safeStorage());
@@ -53,7 +58,18 @@
     anim: null,
     dragging: false,
     view: { s: 20, w: 0, h: 0 },
+    tStart: 0, // début de l'animation (négatif quand la balle part du côté adverse)
+    /** État exact de la balle à l'instant t (t < 0 : vol côté adverse, avant le filet). */
+    ballAt(t) {
+      if (!app.sc) return null;
+      if (t < 0) return G.ballistic(app.sc.init, t, app.sc.sim.params.g);
+      return P.stateAt(app.sc.sim, t);
+    },
   };
+
+  /* Vue 3D : chargée en module ES (view3d.js) ; repli sur la 2D si WebGL ou le CDN manquent. */
+  const three = { status: 'loading', ctrl: null, timer: null };
+  const is3D = () => store.state.settings.view === '3d' && three.status === 'ready';
 
   function safeStorage() {
     try {
@@ -75,6 +91,23 @@
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
+    const show3D = is3D();
+    court.hidden = show3D;
+    $('view3d').hidden = !show3D;
+    if (show3D) {
+      const el = $('view3d');
+      const w = el.clientWidth;
+      // Décision : 3 gros boutons sous la scène, on réduit un peu sa hauteur
+      const hMax = app.mode === 'decision' ? w : w * 1.25;
+      const h = Math.round(Math.max(w * 0.8, Math.min(hMax, window.innerHeight - 340)));
+      el.style.height = h + 'px';
+      three.ctrl.resize(w, h);
+      sizeGauge(h, dpr);
+      app.view = { s: app.view.s, w, h };
+      draw();
+      if (!$('statsView').hidden) renderStats();
+      return;
+    }
     const w = court.clientWidth;
     const s = w / (COURT.width + 2 * MARGIN);
     const h = s * (COURT.depth + 2 * MARGIN);
@@ -82,13 +115,17 @@
     court.width = Math.round(w * dpr);
     court.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sizeGauge(h, dpr);
+    app.view = { s, w, h };
+    draw();
+    if (!$('statsView').hidden) renderStats();
+  }
+
+  function sizeGauge(h, dpr) {
     gauge.style.height = h + 'px';
     gauge.width = Math.round(gauge.clientWidth * dpr);
     gauge.height = Math.round(h * dpr);
     gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    app.view = { s, w, h };
-    draw();
-    if (!$('statsView').hidden) renderStats();
   }
 
   const sx = (x) => (MARGIN + x) * app.view.s;
@@ -339,6 +376,10 @@
 
   function draw() {
     if (!app.view.w) return;
+    if (is3D()) {
+      // La scène 3D a sa propre boucle de rendu ; ici on ne met à jour que la jauge.
+      return drawGauge(app.sc ? app.ballAt(app.t) : null);
+    }
     drawCourt();
     const sc = app.sc;
     if (!sc) return drawGauge(null);
@@ -523,13 +564,18 @@
     const seed = (Math.random() * 4294967296) >>> 0;
     const sc = S.generate({ family: cfg.family, side: cfg.side, level, seed });
     app.sc = sc;
+    app.round = (app.round || 0) + 1;
+    app.strike = null;
+    app.tStart = mode === 'realtime' ? -G.preNetDuration(sc.init, sc.sim.params.g) : 0;
+    app.t = app.tStart;
+    if (three.ctrl) three.ctrl.newScenario();
     app.samples = P.sample(sc.sim, 1 / 120);
     app.result = null;
     app.answer = null;
     app.question = mode === 'lecture' ? S.readingQuestion(sc, P.mulberry32(seed ^ 0x5bd1e995)) : null;
     app.freezeT = mode === 'decision' ? sc.decisionFreezeT : sc.freezeT;
     app.player = null;
-    if (mode === 'placement') app.player = { x: COURT.width / 2, y: S.PLAYER_DEPTH };
+    if (mode === 'placement' || mode === 'realtime') app.player = { x: COURT.width / 2, y: S.PLAYER_DEPTH };
     if (mode === 'decision') {
       const s = P.stateAt(sc.sim, app.freezeT);
       const x = s.x + (s.vx * (S.PLAYER_DEPTH - s.y)) / s.vy;
@@ -539,6 +585,7 @@
     $('familyTag').hidden = true;
     app.phase = 'intro';
     updateUI();
+    if (mode === 'realtime') return startLive(app.round);
     play(0, app.freezeT, INTRO_SPEED, () => {
       app.phase = 'answer';
       updateUI();
@@ -546,11 +593,43 @@
     });
   }
 
+  /** Temps réel : courte pause sur la frappe adverse, puis la balle part à vitesse réelle. */
+  function startLive(round) {
+    draw();
+    setTimeout(() => {
+      if (app.round !== round || app.mode !== 'realtime') return;
+      app.phase = 'live';
+      updateUI();
+      play(app.tStart, app.sc.endT, 1, () => strike(true));
+    }, 900);
+  }
+
+  function strike(timeout) {
+    if (app.phase !== 'live') return;
+    app.anim = null;
+    app.strike = timeout ? null : { t: app.t, player: Object.assign({}, app.player) };
+    app.phase = 'answer';
+    submit();
+  }
+
+  /** Évaluation du mode temps réel : distance à la zone de frappe idéale + timing. */
+  function evaluateRealtime(sc) {
+    const st = app.strike;
+    const pos = st ? st.player : app.player;
+    const pl = S.evaluatePlacement(sc, pos);
+    const pts = pl.zone.points;
+    const win = { t0: pts[0].t, t1: pts[pts.length - 1].t };
+    const j = G.judgeStrike({ placementError: pl.error, strikeT: st ? st.t : null, window: win, reachTol: S.PLACEMENT_SUCCESS_M });
+    return Object.assign({}, pl, j, { error: pl.error, window: win, strikeT: st ? st.t : null, player: pos });
+  }
+
   function submit(choice) {
     if (app.phase !== 'answer') return;
     const sc = app.sc;
     let res;
-    if (app.mode === 'lecture') {
+    if (app.mode === 'realtime') {
+      res = evaluateRealtime(sc);
+    } else if (app.mode === 'lecture') {
       if (!app.answer) return;
       res = S.evaluateReading(app.question, app.answer);
     } else if (app.mode === 'placement') {
@@ -569,18 +648,22 @@
       error: typeof res.error === 'number' ? Math.round(res.error * 100) / 100 : null,
       choice: choice || undefined,
       revealed: !!store.state.settings.reveal,
+      view: is3D() ? '3d' : '2d',
+      timingError: app.mode === 'realtime' && res.timingError != null ? Math.round(res.timingError * 1000) / 1000 : undefined,
     });
     if (rec.levelChange > 0) toast(`Niveau ${rec.level} débloqué : balles plus rapides et angles plus fermés`);
     if (rec.levelChange < 0) toast(`Retour au niveau ${rec.level} pour consolider`);
     app.phase = 'playing';
     updateUI();
-    play(app.freezeT, sc.endT, REPLAY_SPEED, () => {
+    play(replayFrom(), sc.endT, REPLAY_SPEED, () => {
       app.phase = 'result';
       showFeedback();
       updateUI();
       draw();
     });
   }
+
+  const replayFrom = () => (app.mode === 'realtime' ? app.tStart : app.freezeT);
 
   function showFeedback() {
     const sc = app.sc;
@@ -598,6 +681,14 @@
       head = res.success ? '✓ Bien placé' : `✗ ${fmt(res.error, 2)} m de trop`;
       sub = `Tu étais à ${fmt(res.distance, 2)} m du point de frappe idéal (cible : 0,3 à 1,1 m, à distance de bras ; tolérance ${fmt(S.PLACEMENT_SUCCESS_M)} m)` +
         (res.zone.relaxed ? ' — fenêtre élargie : la balle ne redescend pas proprement entre 0,8 et 1,3 m.' : '.');
+    } else if (app.mode === 'realtime') {
+      if (res.success) head = '✓ Bien placé, bon timing';
+      else if (res.timing === 'none') head = '✗ Pas de frappe';
+      else if (res.timing === 'early') head = `✗ Trop tôt de ${fmt(res.timingError, 2)} s`;
+      else if (res.timing === 'late') head = `✗ Trop tard de ${fmt(res.timingError, 2)} s`;
+      else head = `✗ Mal placé : ${fmt(res.error, 2)} m de trop`;
+      sub = `Écart à la zone de frappe : ${fmt(res.error, 2)} m (tolérance ${fmt(S.PLACEMENT_SUCCESS_M)} m)` +
+        (res.timingError != null ? ` · timing : ${res.timingError ? fmt(res.timingError, 2) + ' s hors fenêtre' : 'dans la fenêtre'} (tolérance 0,15 s).` : '.');
     } else {
       head = res.success ? '✓ Bonne décision' : '✗ Pas le meilleur choix';
       sub = `Meilleure option : ${S.DECISIONS[res.best]}.`;
@@ -650,11 +741,12 @@
     });
 
     let prompt = '';
-    if (phase === 'intro') prompt = 'Observe la balle…';
-    else if (phase === 'answer') prompt = mode === 'lecture' ? app.question.label : MODE_PROMPTS[mode];
-    else if (phase === 'playing') prompt = 'Trajectoire réelle (ralenti)…';
-    else if (phase === 'result') prompt = mode === 'lecture' ? app.question.label : MODE_PROMPTS[mode];
-    if (phase === 'answer' && mode === 'lecture' && !app.answer) prompt += ' Touche le terrain.';
+    if (phase === 'intro') prompt = mode === 'realtime' ? 'Attention, la balle part…' : 'Observe la balle…';
+    else if (phase === 'live') prompt = MODE_PROMPTS.realtime;
+    else if (phase === 'answer') prompt = mode === 'lecture' ? app.question.label : is3D() && MODE_PROMPTS_3D[mode] ? MODE_PROMPTS_3D[mode] : MODE_PROMPTS[mode];
+    else if (phase === 'playing') prompt = is3D() ? 'Trajectoire réelle (ralenti) — change de vue en bas de la scène.' : 'Trajectoire réelle (ralenti)…';
+    else if (phase === 'result') prompt = mode === 'lecture' ? app.question.label : is3D() && MODE_PROMPTS_3D[mode] ? MODE_PROMPTS_3D[mode] : MODE_PROMPTS[mode];
+    if (phase === 'answer' && mode === 'lecture' && !app.answer) prompt += is3D() ? ' Touche le sol de la scène.' : ' Touche le terrain.';
     $('prompt').textContent = prompt;
 
     if (phase === 'result') {
@@ -663,12 +755,22 @@
       main.hidden = false;
     } else if (mode === 'decision') {
       main.hidden = true;
+    } else if (mode === 'realtime') {
+      main.hidden = false;
+      main.textContent = 'Frappe !';
+      main.disabled = phase !== 'live';
     } else {
       main.hidden = false;
       main.textContent = 'Valider';
       main.disabled = phase !== 'answer' || (mode === 'lecture' && !app.answer);
     }
-    $('replayBtn').disabled = phase === 'intro' || phase === 'playing';
+    const camSel = $('camSel');
+    camSel.hidden = !(is3D() && (phase === 'playing' || phase === 'result'));
+    if (three.ctrl) {
+      const cm = three.ctrl.cameraMode;
+      camSel.querySelectorAll('.cam-btn').forEach((b) => b.classList.toggle('active', b.dataset.cam === cm));
+    }
+    $('replayBtn').disabled = phase === 'intro' || phase === 'playing' || phase === 'live' || (mode === 'realtime' && phase !== 'result');
     refreshHeader();
   }
 
@@ -693,7 +795,7 @@
     } else if (app.phase === 'result') {
       app.phase = 'playing';
       updateUI();
-      play(app.freezeT, app.sc.endT, REPLAY_SPEED, () => {
+      play(replayFrom(), app.sc.endT, REPLAY_SPEED, () => {
         app.phase = 'result';
         $('feedback').hidden = false;
         updateUI();
@@ -733,7 +835,13 @@
 
   $('mainBtn').addEventListener('click', () => {
     if (app.phase === 'result') newRound();
+    else if (app.mode === 'realtime') strike(false);
     else submit();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || app.mode !== 'realtime' || !is3D()) return;
+    e.preventDefault();
+    if (app.phase === 'live') strike(false);
   });
   $('replayBtn').addEventListener('click', replay);
   document.querySelectorAll('.choice').forEach((b) =>
@@ -753,6 +861,14 @@
   /* ---------- Navigation ---------- */
 
   function setMode(mode) {
+    if (mode === 'realtime' && !is3D()) {
+      if (three.status !== 'ready') {
+        toast(three.status === 'loading' ? 'Vue 3D en cours de chargement…' : 'Le mode Temps réel nécessite la vue 3D, indisponible ici.');
+        return;
+      }
+      store.setSetting('view', '3d');
+      toast('Le mode Temps réel se joue en vue 3D');
+    }
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
     const isStats = mode === 'stats';
     $('trainView').hidden = isStats;
@@ -761,6 +877,7 @@
     app.mode = mode;
     if (isStats) {
       app.anim = null;
+      if (three.ctrl) three.ctrl.stop();
       refreshHeader();
       renderStats();
       return;
@@ -771,7 +888,7 @@
       app.result = null;
       app.phase = 'idle';
       requestAnimationFrame(() => {
-        resize();
+        syncView();
         newRound();
       });
     }
@@ -794,7 +911,7 @@
       [Stats.streak(atts, Date.now()) + ' j', 'Série de jours'],
       [n, 'Exercices'],
       [n ? Math.round((ok / n) * 100) + ' %' : '—', 'Réussite globale'],
-      [`${st.levels.lecture} · ${st.levels.placement} · ${st.levels.decision}`, 'Niveaux L · P · D'],
+      [Stats.MODES.map((m) => st.levels[m]).join('·'), 'Niveaux L · P · D · T'],
     ];
     $('kpis').innerHTML = kpis.map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
 
@@ -807,6 +924,13 @@
         `<td class="num">${s.meanError == null ? '—' : fmt(s.meanError, 2) + ' m'}</td></tr>`;
     }
     $('familyTable').innerHTML = html + '</tbody>';
+
+    const vs = Stats.viewStats(atts);
+    const cell = (c) => (c.n ? `${Math.round(c.rate * 100)} %${c.meanError == null ? '' : ' · ' + fmt(c.meanError, 2) + ' m'}<br><small>${c.n} essai${c.n > 1 ? 's' : ''}</small>` : '—');
+    const names = { lecture: 'Lecture', placement: 'Placement', decision: 'Décision', realtime: 'Temps réel' };
+    let vh = '<thead><tr><th>Mode</th><th class="num">Vue 2D</th><th class="num">Vue 3D</th></tr></thead><tbody>';
+    for (const m of Stats.MODES) vh += `<tr><td>${names[m]}</td><td class="num">${cell(vs[m]['2d'])}</td><td class="num">${cell(vs[m]['3d'])}</td></tr>`;
+    $('viewTable').innerHTML = vh + '</tbody>';
     $('chartLegend').innerHTML = S.FAMILY_IDS.map((f) => `<span><span class="swatch" style="background:var(--series-${f})"></span>${f} · ${S.FAMILIES[f].short}</span>`).join('');
     drawChart();
   }
@@ -976,9 +1100,121 @@
     toastTimer = setTimeout(() => (t.hidden = true), 3200);
   }
 
+  /* ---------- Sélecteur Vue 2D / Vue 3D ---------- */
+
+  function webglAvailable() {
+    try {
+      const c = document.createElement('canvas');
+      return !!(window.WebGLRenderingContext && (c.getContext('webgl2') || c.getContext('webgl')));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function notice(msg) {
+    const n = $('notice');
+    n.textContent = msg || '';
+    n.hidden = !msg;
+  }
+
+  function fail3D(status, msg) {
+    three.status = status;
+    document.querySelector('.tab[data-mode="realtime"]').disabled = true;
+    if (app.mode === 'realtime') setMode('lecture');
+    clearTimeout(three.timer);
+    if (three.ctrl) three.ctrl.stop();
+    document.querySelector('.seg-btn[data-view="3d"]').disabled = true;
+    if (store.state.settings.view === '3d') notice(msg);
+    syncView();
+  }
+
+  function init3D() {
+    if (three.ctrl || three.status !== 'loading' || !window.GlassView3D) return;
+    try {
+      three.ctrl = window.GlassView3D.create({
+        container: $('view3d'),
+        getApp: () => app,
+        getSettings: () => store.state.settings,
+        canMove: () => is3D() && ((app.phase === 'answer' && app.mode === 'placement') || (app.phase === 'live' && app.mode === 'realtime')),
+        onPlayerMove: (p) => {
+          app.player = p;
+        },
+        onGroundTap: (p) => {
+          if (app.mode !== 'lecture' || app.phase !== 'answer') return;
+          app.answer = p;
+          updateUI();
+        },
+      });
+      three.status = 'ready';
+      clearTimeout(three.timer);
+      syncView();
+    } catch (e) {
+      fail3D('error', 'La vue 3D n’a pas pu démarrer (' + e.message + '). Retour à la vue 2D.');
+    }
+  }
+
+  /** Applique la vue choisie (si disponible) : boutons, boucle de rendu, tailles. */
+  function syncView() {
+    const want3D = store.state.settings.view === '3d';
+    document.querySelectorAll('.seg-btn').forEach((b) => {
+      const on = (b.dataset.view === '3d') === (want3D && three.status === 'ready');
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    if (three.ctrl) {
+      if (is3D() && $('statsView').hidden) three.ctrl.start();
+      else three.ctrl.stop();
+    }
+    if (want3D && three.status === 'loading') notice('Chargement de la vue 3D…');
+    else if (three.status === 'ready' || !want3D) notice('');
+    resize();
+  }
+
+  for (const [id, key] of [['freeLookToggle', 'freeLook'], ['trailToggle', 'trail']]) {
+    const el = $(id);
+    el.checked = !!store.state.settings[key];
+    el.addEventListener('change', () => store.setSetting(key, el.checked));
+  }
+
+  document.querySelectorAll('.cam-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!three.ctrl) return;
+      three.ctrl.setCameraMode(b.dataset.cam);
+      updateUI();
+    })
+  );
+
+  function setView(view) {
+    if (view === '3d' && three.status !== 'ready' && three.status !== 'loading') return;
+    store.setSetting('view', view);
+    if (view === '2d' && app.mode === 'realtime') return setMode('lecture');
+    syncView();
+  }
+
+  document.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  if (!webglAvailable()) {
+    document.querySelector('.tab[data-mode="realtime"]').disabled = true;
+    fail3D('nowebgl', 'WebGL n’est pas disponible sur cet appareil ou ce navigateur : la vue 3D est désactivée, la vue 2D reste utilisable.');
+  } else {
+    document.addEventListener('glass3d-ready', init3D);
+    document.addEventListener('glass3d-error', () =>
+      fail3D(
+        'error',
+        location.protocol === 'file:'
+          ? 'La vue 3D nécessite d’ouvrir Glass Lab via un serveur web (les modules ES ne se chargent pas en file://). Voir le README. Retour à la vue 2D.'
+          : 'La vue 3D n’a pas pu être chargée (Three.js inaccessible : connexion au CDN impossible ?). Retour à la vue 2D.'
+      )
+    );
+    three.timer = setTimeout(() => {
+      if (three.status === 'loading') fail3D('error', 'La vue 3D met trop de temps à se charger. Retour à la vue 2D.');
+    }, 12000);
+    init3D();
+  }
+
   window.addEventListener('resize', resize);
   window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => resize());
 
-  resize();
+  syncView();
   newRound();
 })();
