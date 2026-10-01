@@ -1,0 +1,44 @@
+# Publie Glass Lab sur GitHub Pages (branche gh-pages) à chaque nouvelle version poussée.
+# Les tests doivent passer : une version cassée n'est jamais publiée.
+name: Publier sur GitHub Pages
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tests
+        run: node test.js
+
+      - name: Publier sur gh-pages
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir site
+          cp index.html style.css *.js site/
+          rm site/test.js
+          touch site/.nojekyll
+          cd site
+          git init -q
+          git checkout -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Publication de ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
