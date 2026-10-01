@@ -263,47 +263,6 @@ function onGlass(contact) {
   return true;
 }
 
-/** Premier instant après tFrom où la balle traverse la profondeur y = d en s'éloignant du fond. */
-function crossDepth(sim, d, tFrom, tTo) {
-  tTo = tTo == null ? sim.endT : tTo;
-  const bounds = [tFrom]
-    .concat(sim.segments.map((s) => s.t0).filter((t) => t > tFrom && t < tTo))
-    .concat([tTo]);
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const s = stateAt(sim, bounds[i] + EPS);
-    if (s.vy <= 0) continue;
-    const tau = (d - s.y) / s.vy;
-    const t = bounds[i] + EPS + tau;
-    if (tau >= 0 && t <= bounds[i + 1]) return Object.assign({ t }, stateAt(sim, t));
-  }
-  return null;
-}
-
-/** Premier instant entre tFrom et tTo où la balle traverse y = d en se dirigeant vers le fond. */
-function crossDepthIncoming(sim, d, tFrom, tTo) {
-  const s = stateAt(sim, tFrom);
-  if (s.vy >= 0) return null;
-  const tau = (d - s.y) / s.vy;
-  const t = tFrom + tau;
-  if (tau < 0 || t > tTo) return null;
-  return Object.assign({ t }, stateAt(sim, t));
-}
-
-/** Distance horizontale entre un point et la paroi la plus proche (fond ou latérales). */
-function distToWalls(p) {
-  return Math.min(p.y, p.x, COURT.width - p.x);
-}
-
-/**
- * Fenêtre de frappe idéale entre tFrom et tTo : balle descendante, hauteur dans [zMin, zMax].
- * Retourne la liste des échantillons concernés.
- */
-function hitWindow(sim, tFrom, tTo, zMin, zMax, dt) {
-  zMin = zMin == null ? 0.8 : zMin;
-  zMax = zMax == null ? 1.3 : zMax;
-  return sample(sim, dt || 1 / 120, tFrom, tTo).filter((s) => s.vz < 0 && s.z >= zMin && s.z <= zMax);
-}
-
 const Physics = {
   COURT,
   DEFAULT_PARAMS,
@@ -321,10 +280,6 @@ const Physics = {
   hSpeed,
   onGlass,
   isSide,
-  crossDepth,
-  crossDepthIncoming,
-  distToWalls,
-  hitWindow,
 };
 
 export default Physics;
