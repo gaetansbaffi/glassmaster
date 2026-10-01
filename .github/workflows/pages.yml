@@ -25,15 +25,14 @@ jobs:
           node-version: 22
 
       - name: Tests
-        run: node test.js
+        run: node test/run.js
 
       - name: Publier sur gh-pages
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir site
-          cp index.html style.css *.js site/
-          rm site/test.js
+          cp -r index.html style.css manifest.webmanifest sw.js icons src vendor site/
           touch site/.nojekyll
           cd site
           git init -q

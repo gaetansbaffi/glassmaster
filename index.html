@@ -2,164 +2,130 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f1720">
-  <meta name="description" content="Glass Lab — entraînement à la lecture des rebonds sur les vitres au padel.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1219">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Glass Lab — Match infini : entraîne ta lecture des vitres au padel, en 3D.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Glass Lab">
   <title>Glass Lab</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <!-- Three.js (vue 3D) : version fixée, importée en module ES depuis un CDN, sans bundler -->
+  <!-- Three.js : copie locale versionnée (vendor/), sans bundler -->
   <script type="importmap">
-    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
+    { "imports": { "three": "./vendor/three@0.170.0/three.module.min.js" } }
   </script>
 </head>
 <body>
-  <header class="topbar">
-    <h1 class="brand">Glass<span>Lab</span></h1>
-    <div class="chips">
-      <span class="chip" id="streakChip" title="Jours consécutifs d'entraînement">🔥 <b id="streakVal">0</b> j</span>
-      <span class="chip" id="levelChip" title="Niveau de difficulté du mode">Niv. <b id="levelVal">1</b></span>
+  <canvas id="game" aria-label="Court de padel en 3D, vue première personne"></canvas>
+
+  <!-- Interface de jeu : uniquement la série, Pause, le joystick, Frappe et le toast -->
+  <div id="ui" class="ui" hidden>
+    <div id="touch" class="touch"></div>
+    <div id="streak" class="streak" aria-live="polite"><span id="streakVal">0</span><small>série</small></div>
+    <button id="pauseBtn" class="icon-btn pause-btn" aria-label="Pause (Échap)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button id="strikeBtn" class="strike" aria-label="Frappe (Espace)">FRAPPE</button>
+    <div id="toast" class="toast" hidden role="status" aria-live="polite">
+      <span class="toast-icon" id="toastIcon" aria-hidden="true"></span>
+      <span class="toast-text"><b id="toastTitle"></b><small id="toastSub"></small></span>
+      <button id="toastDetail" class="toast-btn" hidden>Détail</button>
     </div>
-  </header>
+    <div id="guide" class="guide" hidden role="note"></div>
+    <div id="hint" class="hint" hidden>Astuce : tourne ton téléphone en paysage pour mieux voir le court.</div>
+  </div>
+  <div id="fps" class="fps" hidden></div>
 
-  <main id="trainView" class="view">
-    <div class="toolbar">
-      <div class="seg" role="group" aria-label="Type de vue">
-        <button class="seg-btn active" data-view="2d" aria-pressed="true">Vue 2D</button>
-        <button class="seg-btn" data-view="3d" aria-pressed="false">Vue 3D</button>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="revealToggle">
-        <span>Révéler la trajectoire</span>
-      </label>
+  <!-- Accueil -->
+  <section id="home" class="screen home" hidden aria-labelledby="homeTitle">
+    <h1 id="homeTitle" class="title">Glass<span>Lab</span></h1>
+    <p class="tagline">Match infini · lis les vitres, choisis ton coup</p>
+    <button id="playBtn" class="btn-play">Jouer</button>
+    <div class="home-icons">
+      <button class="icon-btn labeled" data-open="stats" aria-label="Statistiques">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="16" y="3" width="4" height="17" rx="1"/></svg><span>Stats</span>
+      </button>
+      <button class="icon-btn labeled" data-open="settings" aria-label="Réglages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm9 4.6v-2.2l-2.4-.6a7 7 0 0 0-.7-1.6l1.3-2.1-1.6-1.6-2.1 1.3a7 7 0 0 0-1.6-.7L13.3 3h-2.2l-.6 2.4a7 7 0 0 0-1.6.7L6.8 4.8 5.2 6.4l1.3 2.1a7 7 0 0 0-.7 1.6L3 10.9v2.2l2.4.6c.2.6.4 1.1.7 1.6l-1.3 2.1 1.6 1.6 2.1-1.3c.5.3 1 .5 1.6.7l.6 2.4h2.2l.6-2.4c.6-.2 1.1-.4 1.6-.7l2.1 1.3 1.6-1.6-1.3-2.1c.3-.5.5-1 .7-1.6l2.4-.6Z"/></svg><span>Réglages</span>
+      </button>
+      <button class="icon-btn labeled fs-btn" aria-label="Plein écran (F)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5v2H6v3H4Zm11-5h5v5h-2V6h-3V4ZM4 15h2v3h3v2H4v-5Zm14 3v-3h2v5h-5v-2h3Z"/></svg><span>Plein écran</span>
+      </button>
     </div>
+  </section>
 
-    <div class="stage">
-      <canvas id="court" aria-label="Vue de dessus du demi-court de défense"></canvas>
-      <div id="view3d" class="view3d" hidden aria-label="Vue 3D première personne">
-        <div class="opts3d" id="opts3d">
-          <label class="pill"><input type="checkbox" id="freeLookToggle"><span>Regard libre</span></label>
-          <label class="pill"><input type="checkbox" id="trailToggle"><span>Traînée</span></label>
-        </div>
-        <div class="camsel" id="camSel" role="group" aria-label="Vue du replay" hidden>
-          <button class="cam-btn active" data-cam="fp">1re pers.</button>
-          <button class="cam-btn" data-cam="top">Dessus</button>
-          <button class="cam-btn" data-cam="side">Côté</button>
-        </div>
-      </div>
-      <div class="mfb" id="matchFb" hidden role="status" aria-live="polite">
-        <span id="matchFbText"></span>
-        <button class="mfb-btn" id="matchDetailBtn">Détail</button>
-      </div>
-      <div class="gauge-wrap">
-        <canvas id="gauge" aria-label="Jauge de hauteur de balle (profil latéral)"></canvas>
-      </div>
-    </div>
-
-    <p class="notice" id="notice" hidden role="status"></p>
-    <section class="match-panel" id="matchPanel" hidden>
-      <p class="match-score" id="matchScore"></p>
-      <details class="match-settings">
-        <summary>Paramètres du match</summary>
-        <div class="setting-row">
-          <span>Vitesse du jeu</span>
-          <div class="seg" role="group" aria-label="Vitesse du jeu">
-            <button class="seg-btn speed-btn" data-speed="0.5">50 %</button>
-            <button class="seg-btn speed-btn" data-speed="0.75">75 %</button>
-            <button class="seg-btn speed-btn" data-speed="1">100 %</button>
-          </div>
-        </div>
-        <label class="toggle"><input type="checkbox" id="autoToggle"><span>Frappe automatique (débutant)</span></label>
-        <label class="toggle"><input type="checkbox" id="pathToggle"><span>Afficher la trajectoire (aide)</span></label>
-        <label class="toggle"><input type="checkbox" id="bestToggle"><span>Afficher le meilleur point après chaque balle</span></label>
-      </details>
-    </section>
-    <span class="family-tag" id="familyTag" hidden></span>
-    <p class="prompt" id="prompt" aria-live="polite">Chargement…</p>
-
-    <div class="actions" id="actions">
-      <div class="decision-buttons" id="decisionButtons" hidden>
-        <button class="btn choice" data-choice="volley">Volée</button>
-        <button class="btn choice" data-choice="glass">Laisser rebondir<br><small>jouer la sortie de vitre</small></button>
-        <button class="btn choice" data-choice="second">Reculer<br><small>attendre le 2e rebond (2e vitre)</small></button>
-      </div>
-      <div class="row">
-        <button class="btn ghost" id="replayBtn" aria-label="Rejouer l'animation">↺ Rejouer</button>
-        <button class="btn primary" id="mainBtn" disabled>Valider</button>
+  <!-- Pause -->
+  <section id="pause" class="screen menu" hidden aria-labelledby="pauseTitle">
+    <div class="panel">
+      <h2 id="pauseTitle">Pause</h2>
+      <div class="summary" id="summary"></div>
+      <button id="resumeBtn" class="btn-primary">Reprendre</button>
+      <div class="menu-row">
+        <button class="btn" data-open="settings">Réglages</button>
+        <button class="btn" data-open="stats">Stats</button>
+        <button class="btn" id="lastDetailBtn">Revoir la dernière erreur</button>
+        <button class="btn fs-btn">Plein écran</button>
+        <button class="btn danger" id="quitBtn">Quitter</button>
       </div>
     </div>
-    <section class="feedback" id="feedback" hidden aria-live="polite">
-      <div class="result" id="result"></div>
-      <ul class="explain" id="explain"></ul>
-      <div class="rule" id="rule"></div>
-    </section>
-    <p class="seed" id="seedInfo"></p>
-  </main>
+  </section>
 
-  <main id="statsView" class="view" hidden>
-    <section class="card">
-      <h2>Progression</h2>
-      <div class="kpis" id="kpis"></div>
-    </section>
-    <section class="card">
-      <h2>Par famille</h2>
-      <table class="stats-table" id="familyTable"></table>
-    </section>
-    <section class="card">
-      <h2>Vue 2D ou 3D</h2>
-      <p class="muted small">Réussite · erreur moyenne selon la vue utilisée pour chaque essai.</p>
-      <table class="stats-table" id="viewTable"></table>
-    </section>
-    <section class="card">
-      <h2>Match infini</h2>
-      <div class="kpis" id="matchKpis"></div>
-      <h3 class="subhead">Par famille de balle</h3>
-      <p class="muted small">Réussite = balle renvoyée · qualité moyenne des frappes · erreur de placement moyenne.</p>
-      <table class="stats-table" id="matchFamilyTable"></table>
-      <h3 class="subhead">Précision de décision</h3>
-      <ul class="explain" id="decisionList"></ul>
-    </section>
-    <section class="card">
-      <h2>Réussite par jour</h2>
-      <p class="muted small">Taux de réussite quotidien par famille (14 derniers jours d'entraînement).</p>
-      <div class="legend" id="chartLegend"></div>
-      <div class="chart-wrap">
-        <canvas id="chart" aria-label="Évolution du taux de réussite par famille"></canvas>
-        <div class="tooltip" id="chartTip" hidden></div>
-      </div>
-    </section>
-    <section class="card">
-      <h2>Données</h2>
-      <p class="muted small">Tout est stocké dans ce navigateur. Exporte pour sauvegarder ou changer d'appareil.</p>
-      <div class="row wrap">
+  <!-- Réglages -->
+  <section id="settings" class="screen menu" hidden aria-labelledby="settingsTitle">
+    <div class="panel scroll">
+      <h2 id="settingsTitle">Réglages</h2>
+      <div id="settingsList" class="settings-list"></div>
+      <h3>Données</h3>
+      <div class="menu-row">
         <button class="btn" id="exportBtn">Exporter (JSON)</button>
         <label class="btn" for="importFile">Importer…</label>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
         <button class="btn danger" id="resetBtn">Réinitialiser</button>
       </div>
-      <p class="small" id="dataMsg" aria-live="polite"></p>
-    </section>
-  </main>
+      <p class="small" id="dataMsg" role="status"></p>
+      <button class="btn-primary back-btn">Retour</button>
+    </div>
+  </section>
 
-  <nav class="tabbar" aria-label="Modes">
-    <button class="tab active" data-mode="lecture"><span class="ico">◎</span>Lecture</button>
-    <button class="tab" data-mode="placement"><span class="ico">⇲</span>Placement</button>
-    <button class="tab" data-mode="decision"><span class="ico">⑂</span>Décision</button>
-    <button class="tab" data-mode="realtime" title="Vue 3D uniquement"><span class="ico">⏱</span>Temps réel</button>
-    <button class="tab" data-mode="match" title="Échange continu"><span class="ico">∞</span>Match</button>
-    <button class="tab" data-mode="stats"><span class="ico">▤</span>Stats</button>
-  </nav>
+  <!-- Stats -->
+  <section id="stats" class="screen menu" hidden aria-labelledby="statsTitle">
+    <div class="panel scroll">
+      <h2 id="statsTitle">Stats</h2>
+      <div id="statsBody"></div>
+      <button class="btn-primary back-btn">Retour</button>
+    </div>
+  </section>
 
-  <div class="toast" id="toast" hidden></div>
+  <!-- Détail d'une balle : replay au ralenti (optionnel, ouvert à la demande) -->
+  <section id="detail" class="detail" hidden aria-labelledby="detailTitle">
+    <div class="cam-sel" role="group" aria-label="Vue du replay">
+      <button class="cam-btn" data-cam="fp">1re pers.</button>
+      <button class="cam-btn" data-cam="top">Dessus</button>
+      <button class="cam-btn" data-cam="side">Côté</button>
+    </div>
+    <div class="detail-sheet">
+      <h2 id="detailTitle" class="detail-title"></h2>
+      <ul id="detailLines" class="detail-lines"></ul>
+      <p id="detailRule" class="rule"></p>
+      <div class="menu-row">
+        <button class="btn" id="replayAgainBtn">Rejouer</button>
+        <button class="btn-primary" id="detailResumeBtn">Reprendre</button>
+      </div>
+    </div>
+  </section>
 
-  <script src="physics.js"></script>
-  <script src="scenarios.js"></script>
-  <script src="stats.js"></script>
-  <script src="geometry.js"></script>
-  <script src="config.js"></script>
-  <script src="quality.js"></script>
-  <script src="shotgen.js"></script>
-  <script src="rally.js"></script>
-  <script src="app.js"></script>
-  <script type="module" src="view3d.js" onerror="document.dispatchEvent(new Event('glass3d-error'))"></script>
+  <div id="fatal" class="screen fatal" hidden role="alert">
+    <h1>Glass Lab</h1>
+    <p id="fatalText">Ce jeu nécessite WebGL, indisponible sur cet appareil ou ce navigateur.</p>
+    <p class="small">Essaie un navigateur récent (Chrome, Safari, Firefox, Edge) et vérifie que l’accélération graphique est activée.</p>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+  <noscript><p class="screen fatal">Glass Lab nécessite JavaScript.</p></noscript>
 </body>
 </html>
