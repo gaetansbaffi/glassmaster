@@ -275,6 +275,8 @@ function tubeCountAt(tube, t) {
  *   canMove()       → vrai si le joueur peut se déplacer (placement, temps réel),
  *   onPlayerMove(p) → nouvelle position { x, y } du joueur,
  *   onGroundTap(p)  → point du sol touché { x, y } (mode lecture),
+ *   joystickOn()    → vrai si le joystick doit s'afficher sans que la vue déplace le joueur
+ *                     (match : le déplacement est piloté par rally.js via moveVector()),
  * }
  */
 function create(opts) {
@@ -363,7 +365,7 @@ function create(opts) {
     if (!active || typing(e)) return;
     if (/^(Arrow|Key[WASD])/.test(e.code)) {
       keys.add(e.code);
-      if (opts.canMove && opts.canMove()) e.preventDefault();
+      if ((opts.canMove && opts.canMove()) || (opts.joystickOn && opts.joystickOn())) e.preventDefault();
     }
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -609,6 +611,16 @@ function create(opts) {
       const pos = res.player || app.player;
       addRing(pos, ORANGE, 0.3, 1.1, 0.22); // zone à distance de bras
       if (app.mode === 'realtime' && res.strikeT != null) addDot(app.ballAt(res.strikeT), ORANGE, 0.08);
+    } else if (app.mode === 'match') {
+      const best = res.shot && res.shot.best.best;
+      if (best) {
+        addDot(best.ball, GREEN, 0.09); // meilleur point de frappe
+        addRing(best.pos, GREEN, 0.28, 0.36); // position idéale pour le jouer
+      }
+      if (res.outcome === 'hit' || res.ball) {
+        if (res.ball) addDot(res.ball, ORANGE, 0.08); // ta frappe
+      }
+      if (res.player) addRing(res.player, ORANGE, 0.3, 1.1, 0.22);
     } else if (app.mode === 'decision') {
       for (const k of ['volley', 'glass', 'second']) {
         const o = res.options[k];
@@ -627,8 +639,8 @@ function create(opts) {
     const replaying = app.phase === 'playing' || app.phase === 'result';
     path.mesh.visible = replaying;
     if (replaying) path.mesh.geometry.setDrawRange(0, tubeCountAt(path, app.t));
-    revealPath.mesh.visible = app.phase === 'answer' && !!getSettings().reveal;
-    const key = app.phase === 'result' || app.phase === 'playing' ? app.result : null;
+    revealPath.mesh.visible = (app.phase === 'answer' && !!getSettings().reveal) || !!app.showPath;
+    const key = app.phase === 'result' || app.phase === 'playing' || app.overlayAlways ? app.result : null;
     if (key !== overlayFor) {
       overlayFor = key;
       rebuildOverlay(app);
@@ -658,7 +670,7 @@ function create(opts) {
     const app = getApp();
     const settings = getSettings();
     const movable = !!(opts.canMove && opts.canMove());
-    joy.classList.toggle('on', movable);
+    joy.classList.toggle('on', movable || !!(opts.joystickOn && opts.joystickOn()));
     movePlayer(app, dt);
     const s = app.sc ? app.ballAt(app.t) : null;
     updateBall(app, s, settings.trail);
@@ -693,6 +705,16 @@ function create(opts) {
       active = false;
       keys.clear();
       renderer.setAnimationLoop(null);
+    },
+    /** Entrée de déplacement (clavier + joystick) dans le repère monde, relative au regard. */
+    moveVector() {
+      const kv = G.keyboardVector(keys);
+      const jv = joyState.vec;
+      const input = { x: G.clamp(kv.x + jv.x, -1, 1), y: G.clamp(kv.y + jv.y, -1, 1) };
+      if (!input.x && !input.y) return { x: 0, y: 0 };
+      const fx = Math.sin(look.yaw);
+      const fy = Math.cos(look.yaw);
+      return { x: fx * input.y + fy * input.x, y: fy * input.y - fx * input.x };
     },
     /** Vue de caméra : 'fp' (première personne), 'top' (dessus) ou 'side' (côté). */
     setCameraMode(mode) {
