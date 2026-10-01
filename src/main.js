@@ -9,6 +9,7 @@ import G from './core/geometry.js';
 import P from './core/physics.js';
 import R from './core/rally.js';
 import { createRenderer, webglAvailable } from './render.js';
+import { createInput } from './input.js';
 
 const STEP = 1 / 120; // pas de physique (s de jeu)
 const MAX_STEPS = 12; // au plus 0,1 s de rattrapage par image
@@ -209,6 +210,7 @@ function frame(now) {
   const dt = last ? Math.min(0.1, (now - last) / 1000) : 1 / 60;
   last = now;
   if (game.moveInput) game.move = G.cameraRelativeMove(game.moveInput(), game.look.yaw);
+  if (game.input && game.input.consumeStrike() && game.state === 'playing') game.strike = true;
   if (game.state === 'playing') stepGame(dt);
   if (game.cur) {
     const alpha = game.acc / STEP;
@@ -263,14 +265,12 @@ function boot() {
     } else startLoop();
   });
 
-  // Provisoire (étape 3) : clavier minimal et lancement direct ; contrôles et écrans arrivent ensuite
-  const keys = new Set();
-  game.moveInput = () => G.keyboardVector(keys);
-  addEventListener('keydown', (e) => {
-    keys.add(e.code);
-    if (e.code === 'Space') game.strike = true;
-  });
-  addEventListener('keyup', (e) => keys.delete(e.code));
+  const input = createInput({ touchLayer: document.getElementById('touch'), strikeButton: document.getElementById('strikeBtn') });
+  game.input = input;
+  game.moveInput = () => input.moveVector();
+  input.on('pause', () => setPaused(game.state === 'playing'));
+  input.on('fullscreen', () => device.fullscreen());
+  input.setEnabled(true);
   startGame();
   startLoop();
 }

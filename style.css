@@ -49,3 +49,32 @@ button { font: inherit; color: inherit; }
 .fatal h1 { margin: 0; font-size: 32px; }
 .fatal p { max-width: 34em; margin: 0; }
 .small { font-size: 14px; color: var(--text-2); }
+
+/* ---------- Contrôles ---------- */
+.ui { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+.touch { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+.joy-base {
+  position: absolute; border-radius: 50%;
+  background: rgba(10, 18, 26, 0.32); border: 2px solid rgba(255, 255, 255, 0.75);
+  pointer-events: none; touch-action: none;
+}
+.joy-base.ghost {
+  left: calc(28px + var(--safe-l)); bottom: calc(28px + var(--safe-b)); top: auto;
+  opacity: 0.35;
+}
+.joy-base.ghost.right { left: auto; right: calc(28px + var(--safe-r)); }
+.joy-knob {
+  position: absolute; left: 50%; top: 50%; width: 44%; height: 44%; border-radius: 50%;
+  transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.92); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.strike {
+  position: absolute; pointer-events: auto; touch-action: none;
+  width: max(96px, 18vh); height: max(96px, 18vh); width: max(96px, 18dvh); height: max(96px, 18dvh);
+  right: calc(24px + var(--safe-r)); bottom: calc(24px + var(--safe-b));
+  border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.9);
+  background: rgba(242, 255, 31, 0.88); color: var(--accent-ink);
+  font-weight: 900; font-size: clamp(14px, 2.6dvh, 20px); letter-spacing: 0.06em;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); transition: transform 80ms ease, background-color 80ms ease;
+}
+.strike.pressed { transform: scale(0.9); background: #ffffff; }
+.lefty .strike { right: auto; left: calc(24px + var(--safe-l)); }
