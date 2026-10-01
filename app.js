@@ -7,6 +7,7 @@
   const P = window.GlassPhysics;
   const S = window.GlassScenarios;
   const Stats = window.GlassStats;
+  const G = window.GlassGeometry;
   const { COURT } = P;
 
   const MARGIN = 0.55; // marge autour du court, en mètres (épaisseur des parois)
@@ -53,7 +54,17 @@
     anim: null,
     dragging: false,
     view: { s: 20, w: 0, h: 0 },
+    /** État exact de la balle à l'instant t (t < 0 : vol côté adverse, avant le filet). */
+    ballAt(t) {
+      if (!app.sc) return null;
+      if (t < 0) return G.ballistic(app.sc.init, t, app.sc.sim.params.g);
+      return P.stateAt(app.sc.sim, t);
+    },
   };
+
+  /* Vue 3D : chargée en module ES (view3d.js) ; repli sur la 2D si WebGL ou le CDN manquent. */
+  const three = { status: 'loading', ctrl: null, timer: null };
+  const is3D = () => store.state.settings.view === '3d' && three.status === 'ready';
 
   function safeStorage() {
     try {
@@ -75,6 +86,21 @@
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
+    const show3D = is3D();
+    court.hidden = show3D;
+    $('view3d').hidden = !show3D;
+    if (show3D) {
+      const el = $('view3d');
+      const w = el.clientWidth;
+      const h = Math.round(Math.max(w * 0.85, Math.min(w * 1.25, window.innerHeight - 340)));
+      el.style.height = h + 'px';
+      three.ctrl.resize(w, h);
+      sizeGauge(h, dpr);
+      app.view = { s: app.view.s, w, h };
+      draw();
+      if (!$('statsView').hidden) renderStats();
+      return;
+    }
     const w = court.clientWidth;
     const s = w / (COURT.width + 2 * MARGIN);
     const h = s * (COURT.depth + 2 * MARGIN);
@@ -82,13 +108,17 @@
     court.width = Math.round(w * dpr);
     court.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sizeGauge(h, dpr);
+    app.view = { s, w, h };
+    draw();
+    if (!$('statsView').hidden) renderStats();
+  }
+
+  function sizeGauge(h, dpr) {
     gauge.style.height = h + 'px';
     gauge.width = Math.round(gauge.clientWidth * dpr);
     gauge.height = Math.round(h * dpr);
     gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    app.view = { s, w, h };
-    draw();
-    if (!$('statsView').hidden) renderStats();
   }
 
   const sx = (x) => (MARGIN + x) * app.view.s;
@@ -339,6 +369,10 @@
 
   function draw() {
     if (!app.view.w) return;
+    if (is3D()) {
+      // La scène 3D a sa propre boucle de rendu ; ici on ne met à jour que la jauge.
+      return drawGauge(app.sc ? app.ballAt(app.t) : null);
+    }
     drawCourt();
     const sc = app.sc;
     if (!sc) return drawGauge(null);
@@ -761,6 +795,7 @@
     app.mode = mode;
     if (isStats) {
       app.anim = null;
+      if (three.ctrl) three.ctrl.stop();
       refreshHeader();
       renderStats();
       return;
@@ -771,7 +806,7 @@
       app.result = null;
       app.phase = 'idle';
       requestAnimationFrame(() => {
-        resize();
+        syncView();
         newRound();
       });
     }
@@ -976,9 +1011,93 @@
     toastTimer = setTimeout(() => (t.hidden = true), 3200);
   }
 
+  /* ---------- Sélecteur Vue 2D / Vue 3D ---------- */
+
+  function webglAvailable() {
+    try {
+      const c = document.createElement('canvas');
+      return !!(window.WebGLRenderingContext && (c.getContext('webgl2') || c.getContext('webgl')));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function notice(msg) {
+    const n = $('notice');
+    n.textContent = msg || '';
+    n.hidden = !msg;
+  }
+
+  function fail3D(status, msg) {
+    three.status = status;
+    clearTimeout(three.timer);
+    if (three.ctrl) three.ctrl.stop();
+    document.querySelector('.seg-btn[data-view="3d"]').disabled = true;
+    if (store.state.settings.view === '3d') notice(msg);
+    syncView();
+  }
+
+  function init3D() {
+    if (three.ctrl || three.status !== 'loading' || !window.GlassView3D) return;
+    try {
+      three.ctrl = window.GlassView3D.create({
+        container: $('view3d'),
+        getApp: () => app,
+      });
+      three.status = 'ready';
+      clearTimeout(three.timer);
+      syncView();
+    } catch (e) {
+      fail3D('error', 'La vue 3D n’a pas pu démarrer (' + e.message + '). Retour à la vue 2D.');
+    }
+  }
+
+  /** Applique la vue choisie (si disponible) : boutons, boucle de rendu, tailles. */
+  function syncView() {
+    const want3D = store.state.settings.view === '3d';
+    document.querySelectorAll('.seg-btn').forEach((b) => {
+      const on = (b.dataset.view === '3d') === (want3D && three.status === 'ready');
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    if (three.ctrl) {
+      if (is3D() && $('statsView').hidden) three.ctrl.start();
+      else three.ctrl.stop();
+    }
+    if (want3D && three.status === 'loading') notice('Chargement de la vue 3D…');
+    else if (three.status === 'ready' || !want3D) notice('');
+    resize();
+  }
+
+  function setView(view) {
+    if (view === '3d' && three.status !== 'ready' && three.status !== 'loading') return;
+    store.setSetting('view', view);
+    syncView();
+  }
+
+  document.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  if (!webglAvailable()) {
+    fail3D('nowebgl', 'WebGL n’est pas disponible sur cet appareil ou ce navigateur : la vue 3D est désactivée, la vue 2D reste utilisable.');
+  } else {
+    document.addEventListener('glass3d-ready', init3D);
+    document.addEventListener('glass3d-error', () =>
+      fail3D(
+        'error',
+        location.protocol === 'file:'
+          ? 'La vue 3D nécessite d’ouvrir Glass Lab via un serveur web (les modules ES ne se chargent pas en file://). Voir le README. Retour à la vue 2D.'
+          : 'La vue 3D n’a pas pu être chargée (Three.js inaccessible : connexion au CDN impossible ?). Retour à la vue 2D.'
+      )
+    );
+    three.timer = setTimeout(() => {
+      if (three.status === 'loading') fail3D('error', 'La vue 3D met trop de temps à se charger. Retour à la vue 2D.');
+    }, 12000);
+    init3D();
+  }
+
   window.addEventListener('resize', resize);
   window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => resize());
 
-  resize();
+  syncView();
   newRound();
 })();

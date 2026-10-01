@@ -17,7 +17,7 @@
       attempts: [],
       levels: { lecture: 1, placement: 1, decision: 1 },
       levelSince: { lecture: 0, placement: 0, decision: 0 },
-      settings: { reveal: false },
+      settings: { reveal: false, view: '2d', freeLook: false, trail: true },
     };
   }
 
