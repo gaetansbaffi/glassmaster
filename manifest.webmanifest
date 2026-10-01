@@ -1,0 +1,19 @@
+{
+  "name": "Glass Lab — Match infini",
+  "short_name": "Glass Lab",
+  "description": "Entraîne ta lecture des vitres au padel : un échange infini en 3D, vue première personne.",
+  "lang": "fr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0b1219",
+  "theme_color": "#0b1219",
+  "categories": ["games", "sports", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
