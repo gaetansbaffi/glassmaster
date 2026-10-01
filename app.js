@@ -38,6 +38,9 @@
     placement: 'Glisse ton joueur là où tu frapperais la balle.',
     decision: 'Que fais-tu ?',
   };
+  const MODE_PROMPTS_3D = {
+    placement: 'Déplace-toi (joystick, flèches ou ZQSD) jusqu’à ta position de frappe.',
+  };
 
   const store = Stats.createStore(safeStorage());
   const app = {
@@ -54,6 +57,7 @@
     anim: null,
     dragging: false,
     view: { s: 20, w: 0, h: 0 },
+    tStart: 0, // début de l'animation (négatif quand la balle part du côté adverse)
     /** État exact de la balle à l'instant t (t < 0 : vol côté adverse, avant le filet). */
     ballAt(t) {
       if (!app.sc) return null;
@@ -89,6 +93,7 @@
     const show3D = is3D();
     court.hidden = show3D;
     $('view3d').hidden = !show3D;
+    $('opts3d').hidden = !show3D;
     if (show3D) {
       const el = $('view3d');
       const w = el.clientWidth;
@@ -557,6 +562,8 @@
     const seed = (Math.random() * 4294967296) >>> 0;
     const sc = S.generate({ family: cfg.family, side: cfg.side, level, seed });
     app.sc = sc;
+    app.tStart = 0;
+    if (three.ctrl) three.ctrl.newScenario();
     app.samples = P.sample(sc.sim, 1 / 120);
     app.result = null;
     app.answer = null;
@@ -685,10 +692,10 @@
 
     let prompt = '';
     if (phase === 'intro') prompt = 'Observe la balle…';
-    else if (phase === 'answer') prompt = mode === 'lecture' ? app.question.label : MODE_PROMPTS[mode];
+    else if (phase === 'answer') prompt = mode === 'lecture' ? app.question.label : is3D() && MODE_PROMPTS_3D[mode] ? MODE_PROMPTS_3D[mode] : MODE_PROMPTS[mode];
     else if (phase === 'playing') prompt = 'Trajectoire réelle (ralenti)…';
     else if (phase === 'result') prompt = mode === 'lecture' ? app.question.label : MODE_PROMPTS[mode];
-    if (phase === 'answer' && mode === 'lecture' && !app.answer) prompt += ' Touche le terrain.';
+    if (phase === 'answer' && mode === 'lecture' && !app.answer) prompt += is3D() ? ' Touche le sol de la scène.' : ' Touche le terrain.';
     $('prompt').textContent = prompt;
 
     if (phase === 'result') {
@@ -1043,6 +1050,16 @@
       three.ctrl = window.GlassView3D.create({
         container: $('view3d'),
         getApp: () => app,
+        getSettings: () => store.state.settings,
+        canMove: () => is3D() && app.phase === 'answer' && app.mode === 'placement',
+        onPlayerMove: (p) => {
+          app.player = p;
+        },
+        onGroundTap: (p) => {
+          if (app.mode !== 'lecture' || app.phase !== 'answer') return;
+          app.answer = p;
+          updateUI();
+        },
       });
       three.status = 'ready';
       clearTimeout(three.timer);
@@ -1067,6 +1084,12 @@
     if (want3D && three.status === 'loading') notice('Chargement de la vue 3D…');
     else if (three.status === 'ready' || !want3D) notice('');
     resize();
+  }
+
+  for (const [id, key] of [['freeLookToggle', 'freeLook'], ['trailToggle', 'trail']]) {
+    const el = $(id);
+    el.checked = !!store.state.settings[key];
+    el.addEventListener('change', () => store.setSetting(key, el.checked));
   }
 
   function setView(view) {

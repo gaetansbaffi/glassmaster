@@ -215,9 +215,18 @@ function buildCourt() {
 
 /* ---------- Contrôleur de vue ---------- */
 
+/**
+ * opts = {
+ *   container, getApp, getSettings,
+ *   canMove()       → vrai si le joueur peut se déplacer (placement, temps réel),
+ *   onPlayerMove(p) → nouvelle position { x, y } du joueur,
+ *   onGroundTap(p)  → point du sol touché { x, y } (mode lecture),
+ * }
+ */
 function create(opts) {
   const container = opts.container;
   const getApp = opts.getApp;
+  const getSettings = opts.getSettings || (() => ({}));
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
   const renderer = new THREE.WebGLRenderer({ antialias: dpr < 2, powerPreference: 'high-performance' });
@@ -246,67 +255,253 @@ function create(opts) {
   shadow.rotation.x = -Math.PI / 2;
   scene.add(shadow);
 
+  // Traînée courte : quelques sphères translucides aux positions récentes
+  const TRAIL_N = 7;
+  const trail = [];
+  for (let i = 0; i < TRAIL_N; i++) {
+    const m = new THREE.Mesh(ball.geometry, new THREE.MeshBasicMaterial({ color: COLORS.ball, transparent: true, opacity: 0.45 * (1 - i / TRAIL_N), depthWrite: false }));
+    m.scale.setScalar(0.85 - i * 0.07);
+    scene.add(m);
+    trail.push(m);
+  }
+
+  // Repère de réponse (mode lecture) : anneau au sol + mât pour le voir de loin
+  const answerMarker = markerGroup(0xff9f1c);
+  scene.add(answerMarker);
+
   const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 90);
   const size = { w: 1, h: 1 };
+  const look = { yaw: Math.PI, pitch: -0.1, ready: false };
+  /** Caméra courante en coordonnées monde (sert aussi au rayon vers le sol). */
+  let camWorld = null;
+
+  /* ----- Entrées : clavier, joystick, regard libre, tap au sol ----- */
+
+  const keys = new Set();
+  let active = false;
+  const typing = (e) => /input|textarea|select/i.test((e.target && e.target.tagName) || '');
+  window.addEventListener('keydown', (e) => {
+    if (!active || typing(e)) return;
+    if (/^(Arrow|Key[WASD])/.test(e.code)) {
+      keys.add(e.code);
+      if (opts.canMove && opts.canMove()) e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+  window.addEventListener('blur', () => keys.clear());
+
+  const joy = document.createElement('div');
+  joy.className = 'joy';
+  joy.innerHTML = '<div class="joy-knob"></div>';
+  joy.setAttribute('aria-label', 'Joystick de déplacement');
+  container.appendChild(joy);
+  const knob = joy.firstChild;
+  const joyState = { id: null, cx: 0, cy: 0, vec: { x: 0, y: 0 } };
+  const JOY_R = 46;
+  joy.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    const r = joy.getBoundingClientRect();
+    joyState.id = e.pointerId;
+    joyState.cx = r.left + r.width / 2;
+    joyState.cy = r.top + r.height / 2;
+    joy.setPointerCapture(e.pointerId);
+    joyMove(e);
+  });
+  function joyMove(e) {
+    if (e.pointerId !== joyState.id) return;
+    const dx = e.clientX - joyState.cx;
+    const dy = e.clientY - joyState.cy;
+    joyState.vec = G.joystickVector(dx, dy, JOY_R);
+    const l = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, JOY_R / l);
+    knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+  }
+  joy.addEventListener('pointermove', joyMove);
+  const joyEnd = (e) => {
+    if (e.pointerId !== joyState.id) return;
+    joyState.id = null;
+    joyState.vec = { x: 0, y: 0 };
+    knob.style.transform = '';
+  };
+  joy.addEventListener('pointerup', joyEnd);
+  joy.addEventListener('pointercancel', joyEnd);
+
+  const canvas = renderer.domElement;
+  const drag = { id: null, x0: 0, y0: 0, x: 0, y: 0, t0: 0, moved: false };
+  canvas.addEventListener('pointerdown', (e) => {
+    drag.id = e.pointerId;
+    drag.x0 = drag.x = e.clientX;
+    drag.y0 = drag.y = e.clientY;
+    drag.t0 = performance.now();
+    drag.moved = false;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== drag.id) return;
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 8) drag.moved = true;
+    if (drag.moved && getSettings().freeLook && camMode === 'fp') {
+      // Regard libre : on « attrape » le décor
+      look.yaw = G.wrapAngle(look.yaw - (e.clientX - drag.x) * 0.006);
+      look.pitch = G.clamp(look.pitch + (e.clientY - drag.y) * 0.006, -1.2, 1.2);
+    }
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+  });
+  const dragEnd = (e) => {
+    if (e.pointerId !== drag.id) return;
+    drag.id = null;
+    if (drag.moved || performance.now() - drag.t0 > 600 || !camWorld || !opts.onGroundTap) return;
+    const r = canvas.getBoundingClientRect();
+    const p = G.screenToGround(camWorld, e.clientX - r.left, e.clientY - r.top, r.width, r.height);
+    if (p && p.y >= 0 && p.y <= 10 && p.x >= 0 && p.x <= COURT_W) opts.onGroundTap({ x: p.x, y: p.y });
+  };
+  canvas.addEventListener('pointerup', dragEnd);
+  canvas.addEventListener('pointercancel', () => (drag.id = null));
+
+  /* ----- Mise à jour par image ----- */
 
   function resize(w, h) {
     size.w = Math.max(1, Math.round(w));
     size.h = Math.max(1, Math.round(h));
     renderer.setSize(size.w, size.h, false);
-    renderer.domElement.style.width = size.w + 'px';
-    renderer.domElement.style.height = size.h + 'px';
+    canvas.style.width = size.w + 'px';
+    canvas.style.height = size.h + 'px';
   }
 
-  function ballWorld(app) {
-    if (!app.sc) return null;
-    return app.ballAt(app.t);
-  }
-
-  function updateBall(s) {
+  function updateBall(app, s, showTrail) {
     ball.visible = shadow.visible = !!s;
+    for (const m of trail) m.visible = false;
     if (!s) return;
     ball.position.copy(sceneVec(s));
     shadow.position.copy(sceneVec({ x: s.x, y: s.y, z: 0.006 }));
     const k = Math.max(0.25, 1 - s.z / 5);
     shadowMat.opacity = 0.55 * k;
     shadow.scale.setScalar(1 + s.z * 0.25);
+    if (!showTrail) return;
+    for (let i = 0; i < TRAIL_N; i++) {
+      const t = app.t - (i + 1) * 0.035;
+      if (t < app.tStart) break;
+      trail[i].position.copy(sceneVec(app.ballAt(t)));
+      trail[i].visible = true;
+    }
   }
 
-  function updateCamera(app, s) {
+  function movePlayer(app, dt) {
+    if (!opts.canMove || !opts.canMove()) return;
+    const kv = G.keyboardVector(keys);
+    const jv = joyState.vec;
+    const input = { x: G.clamp(kv.x + jv.x, -1, 1), y: G.clamp(kv.y + jv.y, -1, 1) };
+    if (!input.x && !input.y) return;
+    const p = G.moveOnCourt(app.player, input, look.yaw, PLAYER_SPEED, dt);
+    opts.onPlayerMove(p);
+  }
+
+  let camMode = 'fp';
+
+  function updateFirstPerson(app, s, dt) {
     const player = app.player || { x: COURT_W / 2, y: 3 };
-    const eye = G.eyePosition(player, 0);
-    const target = s || { x: COURT_W / 2, y: 10, z: 1 };
-    camera.up.set(0, 1, 0);
-    camera.position.copy(sceneVec(eye));
-    camera.lookAt(sceneVec(target));
-    camera.aspect = size.w / size.h;
-    camera.fov = G.verticalFov(75, camera.aspect);
-    camera.updateProjectionMatrix();
+    const eye0 = G.eyePosition(player, look.yaw);
+    if (!getSettings().freeLook || !look.ready) {
+      // Par défaut, le regard suit la balle en douceur (ou le filet sans balle)
+      const target = s ? { x: s.x, y: s.y, z: Math.max(s.z, 0.5) } : { x: COURT_W / 2, y: 10, z: 1 };
+      const a = G.lookAngles(eye0, target);
+      if (!look.ready) {
+        look.yaw = a.yaw;
+        look.pitch = a.pitch;
+        look.ready = true;
+      } else {
+        look.yaw = G.dampAngle(look.yaw, a.yaw, dt, 0.12);
+        look.pitch = G.damp(look.pitch, G.clamp(a.pitch, -1.2, 1.2), dt, 0.12);
+      }
+    }
+    const eye = G.eyePosition(player, look.yaw);
+    const dir = G.dirFromAngles(look.yaw, look.pitch);
+    return { position: eye, target: G.vec.add(eye, dir), up: { x: 0, y: 0, z: 1 } };
   }
 
-  let running = false;
-  function frame() {
+  function applyCamera(cw, fovDeg) {
+    camera.aspect = size.w / size.h;
+    camera.fov = fovDeg;
+    camera.up.copy(sceneVec(cw.up).sub(sceneVec({ x: 0, y: 0, z: 0 })));
+    camera.position.copy(sceneVec(cw.position));
+    camera.lookAt(sceneVec(cw.target));
+    camera.updateProjectionMatrix();
+    camWorld = Object.assign({ fovDeg, aspect: camera.aspect }, cw);
+  }
+
+  function updateMarkers(app) {
+    answerMarker.visible = app.mode === 'lecture' && !!app.answer;
+    if (answerMarker.visible) answerMarker.position.copy(sceneVec({ x: app.answer.x, y: app.answer.y, z: 0 }));
+  }
+
+  // Compteur d'images optionnel (?fps dans l'URL)
+  const fpsEl = /[?&]fps\b/.test(location.search) ? document.createElement('div') : null;
+  if (fpsEl) {
+    fpsEl.className = 'fps';
+    container.appendChild(fpsEl);
+  }
+  const fps = { n: 0, t: 0 };
+
+  let last = 0;
+  function frame(now) {
+    const dt = last ? Math.min(0.1, (now - last) / 1000) : 1 / 60;
+    last = now;
     const app = getApp();
-    const s = ballWorld(app);
-    updateBall(s);
-    updateCamera(app, s);
+    const settings = getSettings();
+    const movable = !!(opts.canMove && opts.canMove());
+    joy.classList.toggle('on', movable);
+    movePlayer(app, dt);
+    const s = app.sc ? app.ballAt(app.t) : null;
+    updateBall(app, s, settings.trail);
+    updateMarkers(app);
+    const cw = updateFirstPerson(app, s, dt);
+    applyCamera(cw, G.verticalFov(75, size.w / size.h));
     renderer.render(scene, camera);
+    if (fpsEl) {
+      fps.n++;
+      if (now - fps.t > 500) {
+        fpsEl.textContent = Math.round((fps.n * 1000) / (now - fps.t)) + ' i/s';
+        fps.n = 0;
+        fps.t = now;
+      }
+    }
   }
 
   return {
     resize,
     start() {
-      if (running) return;
-      running = true;
+      if (active) return;
+      active = true;
+      last = 0;
       renderer.setAnimationLoop(frame);
     },
     stop() {
-      running = false;
+      active = false;
+      keys.clear();
       renderer.setAnimationLoop(null);
     },
-    setScenario() {},
-    refresh() {},
+    /** Nouveau scénario : le regard se recale immédiatement. */
+    newScenario() {
+      look.ready = false;
+    },
   };
+}
+
+const PLAYER_SPEED = 4.5; // m/s, déplacement de défense réaliste
+
+/** Anneau au sol + mât vertical, pour repérer un point de loin. */
+function markerGroup(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, depthWrite: false, transparent: true, opacity: 0.95 });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.24, 24), mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.01;
+  g.add(ring);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 1, 6), mat);
+  pole.position.y = 0.5;
+  g.add(pole);
+  g.visible = false;
+  return g;
 }
 
 window.GlassView3D = { create, revision: THREE.REVISION };
