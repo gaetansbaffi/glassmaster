@@ -443,6 +443,51 @@ function measure() {
   document.documentElement.classList.toggle('portrait', screenSize.h > screenSize.w);
 }
 
+/* ---------- Performance : résolution dynamique et compteur ---------- */
+
+const perf = {
+  maxPr: Math.min(window.devicePixelRatio || 1, 2), // pixel ratio plafonné à 2
+  pr: 0, // fixé au démarrage par applySettings()
+  fps: 60,
+  low: 0, // durée cumulée sous 50 i/s
+  high: 0, // durée cumulée au-dessus de 58 i/s
+  debug: params.get('debug') === '1',
+  shown: 0,
+};
+
+function setPixelRatio(pr) {
+  perf.pr = pr;
+  renderer.setPixelRatio(pr);
+}
+
+/** Qualité « auto » : baisse la résolution si < 50 i/s pendant 2 s, la remonte si stable (≥ 58 i/s, 4 s). */
+function adaptResolution(dt) {
+  perf.fps += (1 / Math.max(dt, 1e-3) - perf.fps) * 0.1;
+  if (settings().quality !== 'auto') return;
+  if (perf.fps < 50) {
+    perf.low += dt;
+    perf.high = 0;
+    if (perf.low > 2) {
+      perf.low = 0;
+      if (perf.pr > 0.6) setPixelRatio(Math.max(0.6, +(perf.pr * 0.85).toFixed(2)));
+    }
+  } else if (perf.fps >= 58) {
+    perf.high += dt;
+    perf.low = 0;
+    if (perf.high > 4) {
+      perf.high = 0;
+      if (perf.pr < perf.maxPr) setPixelRatio(Math.min(perf.maxPr, +(perf.pr * 1.1).toFixed(2)));
+    }
+  } else perf.low = perf.high = 0;
+}
+
+function showFps(now) {
+  if (!perf.debug || now - perf.shown < 500) return;
+  perf.shown = now;
+  const info = renderer.renderer.info.render;
+  $('fps').textContent = `${Math.round(perf.fps)} i/s · résolution ×${perf.pr.toFixed(2)} · ${info.calls} appels · ${info.triangles} triangles`;
+}
+
 /* ---------- Boucle ---------- */
 
 let last = 0;
@@ -465,6 +510,8 @@ function frame(now) {
   } else gameView(dt, aspect);
   renderer.update(view);
   renderer.render();
+  adaptResolution(dt);
+  showFps(now);
 }
 
 function startLoop() {
@@ -486,8 +533,8 @@ function applySettings() {
   input.setSensitivity(s.sensitivity);
   audio.setEnabled(s.sound);
   audio.setVibration(s.vibration);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  renderer.setPixelRatio(s.quality === 'low' ? 1 : dpr);
+  if (s.quality === 'low') setPixelRatio(Math.min(1, perf.maxPr));
+  else if (s.quality === 'normal' || !perf.pr || perf.pr > perf.maxPr) setPixelRatio(perf.maxPr);
   applyRallySettings();
 }
 
@@ -622,8 +669,22 @@ function boot() {
   window.addEventListener('blur', pause);
   // L'audio ne peut démarrer qu'après un geste de l'utilisateur
   for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => audio.unlock(), { capture: true, passive: true });
+  $('fps').hidden = !perf.debug;
   setScreen('home');
   startLoop();
+  registerServiceWorker();
+}
+
+/** PWA : service worker (hors ligne après le premier chargement), seulement en HTTPS ou en local. */
+function registerServiceWorker() {
+  try {
+    const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || local) && !params.has('nosw')) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  } catch (e) {
+    /* ignoré */
+  }
 }
 
 boot();

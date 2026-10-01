@@ -32,8 +32,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir site
-          cp index.html style.css *.js site/
-          rm site/test.js
+          cp -r index.html style.css manifest.webmanifest sw.js icons src vendor site/
           touch site/.nojekyll
           cd site
           git init -q
