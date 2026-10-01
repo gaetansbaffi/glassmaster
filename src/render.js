@@ -394,6 +394,9 @@ export function createRenderer(canvas, opts) {
     else camera.up.set(0, 1, 0); // horizon stable, jamais de roulis
     G.worldToSceneInto(camera.position, c.px, c.py, c.pz);
     camera.lookAt(G.worldToSceneInto(tmp, c.tx, c.ty, c.tz));
+    // Décalage horizontal de l'image (fraction de largeur) quand un panneau couvre une partie de l'écran
+    if (v.viewShift || v.viewShiftY) camera.setViewOffset(size.w, size.h, (v.viewShift || 0) * size.w, (v.viewShiftY || 0) * size.h, size.w, size.h);
+    else if (camera.view) camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }
 
