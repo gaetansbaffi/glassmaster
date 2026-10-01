@@ -13,6 +13,7 @@ import Stats from './core/stats.js';
 import { createRenderer, webglAvailable } from './render.js';
 import { createInput } from './input.js';
 import { createHud } from './hud.js';
+import { createAudio } from './audio.js';
 import { DEFAULT_SETTINGS } from './settings.js';
 import { loadState, saveState, exportState, importStateFile, storageAvailable } from './storage.js';
 
@@ -94,6 +95,7 @@ const game = {
 let renderer = null;
 let input = null;
 let hud = null;
+const audio = createAudio();
 
 /* ---------- Vue (objets réutilisés d'une image à l'autre) ---------- */
 
@@ -237,7 +239,19 @@ function onBallResult(r, shot) {
 }
 
 function onRallyEvent(e) {
-  if (e.type === 'newBall') return showShot(game.cur.shot);
+  if (e.type === 'newBall') {
+    audio.hit(0.35); // frappe adverse
+    return showShot(game.cur.shot);
+  }
+  if (e.type === 'hit') {
+    audio.hit(0.6 + 0.4 * e.result.quality);
+    audio.buzz(18);
+    setTimeout(() => audio.success(e.result.quality), 60);
+  } else if (e.type === 'miss') {
+    if (e.result.reason === 'weak') audio.hit(0.4);
+    audio.miss();
+    audio.buzz([30, 40, 30]);
+  }
   if (e.type === 'hit' || e.type === 'miss') onBallResult(e.result, game.cur.shot);
 }
 
@@ -248,6 +262,7 @@ function stepGame(dtReal) {
     game.prev = game.cur;
     game.cur = R.step(game.cur, STEP, { move: game.move, strike: game.strike });
     game.strike = false;
+    contactSounds(game.prev, game.cur);
     for (const e of game.cur.events) onRallyEvent(e);
     game.acc -= STEP;
     n++;
@@ -258,6 +273,26 @@ function stepGame(dtReal) {
   if (!game.firstBallSeen && game.cur.phase === 'incoming' && game.cur.t > 0) {
     game.firstBallSeen = true;
     if (!save.guideDone) hud.guideShow(1);
+  }
+}
+
+/* ---------- Sons des contacts ---------- */
+
+/** Joue les sons des rebonds (sol, vitres) franchis pendant le dernier pas de physique. */
+function contactSounds(a, b) {
+  if (a.shot !== b.shot) return;
+  if (a.phase === 'incoming') {
+    const p = b.player;
+    for (const c of b.shot.sim.contacts) {
+      if (c.t <= a.t || c.t > b.t) continue;
+      // Plus fort si la balle est rapide et proche du joueur
+      const dist = Math.hypot(c.pos.x - p.x, c.pos.y - p.y);
+      const k = Math.min(1, P.speed(c.vIn) / 18) * Math.max(0.35, 1 - dist / 12);
+      if (c.type === 'floor') audio.floor(k);
+      else audio.glass(k);
+    }
+  } else if (a.phase === 'return' && a.ret && b.ret && a.ret.t < a.ret.T && b.ret.t >= b.ret.T) {
+    audio.floor(0.25); // rebond du renvoi dans le camp adverse
   }
 }
 
@@ -449,6 +484,8 @@ function applySettings() {
   const s = settings();
   input.setLefty(s.lefty);
   input.setSensitivity(s.sensitivity);
+  audio.setEnabled(s.sound);
+  audio.setVibration(s.vibration);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(s.quality === 'low' ? 1 : dpr);
   applyRallySettings();
@@ -575,12 +612,16 @@ function boot() {
     if (document.hidden) {
       pause();
       stopLoop();
+      audio.suspend();
     } else {
       startLoop();
+      audio.unlock();
       if (device.wantAwake) device.keepAwake(true); // le verrou de veille est perdu en arrière-plan
     }
   });
   window.addEventListener('blur', pause);
+  // L'audio ne peut démarrer qu'après un geste de l'utilisateur
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => audio.unlock(), { capture: true, passive: true });
   setScreen('home');
   startLoop();
 }
