@@ -2,10 +2,27 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1219">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Glass Lab — Match infini : entraîne ta lecture des vitres au padel, en 3D.">
   <title>Glass Lab</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Three.js : copie locale versionnée (vendor/), sans bundler -->
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three@0.170.0/three.module.min.js" } }
+  </script>
 </head>
 <body>
-  <!-- Refonte en jeu unique « Match infini » 3D : l'interface est reconstruite dans src/ (étapes suivantes). -->
+  <canvas id="game" aria-label="Court de padel en 3D, vue première personne"></canvas>
+
+  <div id="fatal" class="screen fatal" hidden role="alert">
+    <h1>Glass Lab</h1>
+    <p id="fatalText">Ce jeu nécessite WebGL, indisponible sur cet appareil ou ce navigateur.</p>
+    <p class="small">Essaie un navigateur récent (Chrome, Safari, Firefox, Edge) et vérifie que l’accélération graphique est activée.</p>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+  <noscript><p class="screen fatal">Glass Lab nécessite JavaScript.</p></noscript>
 </body>
 </html>
